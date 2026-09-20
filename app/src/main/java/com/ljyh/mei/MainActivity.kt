@@ -1129,7 +1129,7 @@ private fun AnimatedBottomNavigationRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp)
+            .padding(horizontal = 20.dp)
             .padding(bottom = bottomInset + NavigationBarBottomMargin)
             .offset {
                 val slideOffset = (bottomInset + NavigationBarHeight) *
