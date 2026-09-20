@@ -55,6 +55,7 @@ import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSiz
 import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -88,6 +89,7 @@ import androidx.compose.ui.util.fastAny
 import androidx.compose.ui.util.fastForEach
 import androidx.compose.ui.zIndex
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.Preferences
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.lifecycleScope
@@ -268,21 +270,21 @@ class MainActivity : ComponentActivity() {
             val appAppearance by rememberEnumPreference(AppAppearanceKey, AppAppearance.System)
             val (lastSelectedTab, setLastSelectedTab) = rememberPreference(LastSelectedTabKey, Index.Home.name)
             val recognizeClipboardLinks by rememberPreference(RecognizeClipboardLinksKey, false)
-            val podcastsEnabled by rememberPreference(PodcastsEnabledKey, defaultValue = true)
-            val downloadsEnabled by rememberPreference(DownloadsEnabledKey, defaultValue = true)
-            val cloudMusicEnabled by rememberPreference(CloudMusicEnabledKey, defaultValue = true)
-            val listeningHistoryEnabled by rememberPreference(ListeningHistoryEnabledKey, defaultValue = true)
-            val findMusicTabEnabled by rememberPreference(FindMusicTabEnabledKey, defaultValue = true)
-            val libraryTabEnabled by rememberPreference(LibraryTabEnabledKey, defaultValue = true)
-            val podcastsTabEnabled by rememberPreference(PodcastsTabEnabledKey, defaultValue = false)
-            val downloadsTabEnabled by rememberPreference(DownloadsTabEnabledKey, defaultValue = false)
-            val cloudMusicTabEnabled by rememberPreference(CloudMusicTabEnabledKey, defaultValue = false)
-            val listeningHistoryTabEnabled by rememberPreference(ListeningHistoryTabEnabledKey, defaultValue = false)
+            val navigationPreferences by context.dataStore.data
+                .collectAsState<Preferences, Preferences?>(initial = null)
+            val podcastsEnabled = navigationPreferences?.get(PodcastsEnabledKey) ?: true
+            val downloadsEnabled = navigationPreferences?.get(DownloadsEnabledKey) ?: true
+            val cloudMusicEnabled = navigationPreferences?.get(CloudMusicEnabledKey) ?: true
+            val listeningHistoryEnabled = navigationPreferences?.get(ListeningHistoryEnabledKey) ?: true
+            val findMusicTabEnabled = navigationPreferences?.get(FindMusicTabEnabledKey) ?: true
+            val libraryTabEnabled = navigationPreferences?.get(LibraryTabEnabledKey) ?: true
+            val podcastsTabEnabled = navigationPreferences?.get(PodcastsTabEnabledKey) ?: false
+            val downloadsTabEnabled = navigationPreferences?.get(DownloadsTabEnabledKey) ?: false
+            val cloudMusicTabEnabled = navigationPreferences?.get(CloudMusicTabEnabledKey) ?: false
+            val listeningHistoryTabEnabled = navigationPreferences?.get(ListeningHistoryTabEnabledKey) ?: false
             val keepScreenOnInPlayer by rememberPreference(PlayerKeepScreenOnKey, false)
-            val navigationTabOrder by rememberPreference(
-                NavigationTabOrderKey,
-                Index.DefaultOrder.joinToString(",", transform = Index::name),
-            )
+            val navigationTabOrder = navigationPreferences?.get(NavigationTabOrderKey)
+                ?: Index.DefaultOrder.joinToString(",", transform = Index::name)
             var playerConnection by remember { mutableStateOf<PlayerConnection?>(null) }
             var clipboardLink by remember { mutableStateOf<NeteaseMusicLink?>(null) }
             var clipboardInspected by rememberSaveable { mutableStateOf(false) }
@@ -950,7 +952,8 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                         AnimatedVisibility(
-                            visible = shouldAllowNavigationBar && selectionToolbar.content.value == null,
+                            visible = navigationPreferences != null && shouldAllowNavigationBar &&
+                                selectionToolbar.content.value == null,
                             enter = fadeIn(),
                             exit = fadeOut(),
                             modifier = Modifier

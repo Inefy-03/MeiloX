@@ -86,11 +86,13 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.plus
 import kotlinx.coroutines.runBlocking
@@ -128,6 +130,7 @@ class MusicService : MediaLibraryService(),
     private val playbackHistorySession = PlaybackHistorySession()
     private var playbackSnapshotJob: Job? = null
     private var periodicSnapshotJob: Job? = null
+    private var playbackRestoreJob: Job? = null
     private lateinit var playbackPersistence: PlaybackPersistence
     private var isRestoringPlayback = true
     private lateinit var connectivityManager: ConnectivityManager
@@ -369,50 +372,65 @@ class MusicService : MediaLibraryService(),
     }
 
     private fun restorePlayerState() {
-        try {
-            val snapshot = runBlocking(Dispatchers.IO) { playbackPersistence.load() }
-            if (snapshot != null && snapshot.items.isNotEmpty()) {
-                val restoredItems = playbackPersistence.restoreItems(snapshot)
-                val restoredIndex = snapshot.currentIndex.coerceIn(restoredItems.indices)
-                queueTitle = snapshot.queueTitle
-                queueManager.isFmMode = snapshot.isFmMode
-                player.shuffleModeEnabled = false
-                player.setMediaItems(
-                    restoredItems,
-                    restoredIndex,
-                    snapshot.positionMs.coerceAtLeast(0L),
-                )
-                player.repeatMode = snapshot.repeatMode.coerceIn(
-                    Player.REPEAT_MODE_OFF,
-                    Player.REPEAT_MODE_ALL,
-                )
-                snapshot.shuffleOrder?.takeIf { it.isPlaybackPermutation(restoredItems.size) }
-                    ?.let { player.setPlaybackOrder(it) }
-                player.shuffleModeEnabled = snapshot.shuffleModeEnabled && !snapshot.isFmMode
-                queueManager.restorePlaylistSource(snapshot.playlistSource)
-                player.prepare()
-                player.playWhenReady = snapshot.playWhenReady
-                Timber.tag("MusicService").d(
-                    "Restored playback snapshot -> items: ${restoredItems.size}, " +
-                        "index: $restoredIndex, position: ${snapshot.positionMs}, " +
-                        "source: ${snapshot.sourceType}",
-                )
-            } else {
-                val preferences = runBlocking(Dispatchers.IO) {
-                    context.dataStore.data.firstOrNull()
-                } ?: return
-                val savedShuffleMode = preferences[IsShuffleModeKey] ?: true
-                val savedRepeatMode = preferences[RepeatModeKey] ?: Player.REPEAT_MODE_ALL
-                player.shuffleModeEnabled = savedShuffleMode
-                player.repeatMode = savedRepeatMode
-                Timber.tag("MusicService").d(
-                    "Restored legacy state -> shuffle: $savedShuffleMode, repeat: $savedRepeatMode",
-                )
+        playbackRestoreJob = scope.launch {
+            try {
+                val restoredState = withContext(Dispatchers.IO) {
+                    playbackPersistence.load()?.let { snapshot ->
+                        snapshot to playbackPersistence.restoreItems(snapshot)
+                    }
+                }
+                // The service is already usable while disk data loads. A new queue wins.
+                if (player.mediaItemCount > 0 || queueTitle != null) return@launch
+                val snapshot = restoredState?.first
+                if (snapshot != null && snapshot.items.isNotEmpty()) {
+                    val restoredItems = restoredState.second
+                    val restoredIndex = snapshot.currentIndex.coerceIn(restoredItems.indices)
+                    queueTitle = snapshot.queueTitle
+                    queueManager.isFmMode = snapshot.isFmMode
+                    player.shuffleModeEnabled = false
+                    player.setMediaItems(
+                        restoredItems,
+                        restoredIndex,
+                        snapshot.positionMs.coerceAtLeast(0L),
+                    )
+                    player.repeatMode = snapshot.repeatMode.coerceIn(
+                        Player.REPEAT_MODE_OFF,
+                        Player.REPEAT_MODE_ALL,
+                    )
+                    snapshot.shuffleOrder?.takeIf { it.isPlaybackPermutation(restoredItems.size) }
+                        ?.let { player.setPlaybackOrder(it) }
+                    player.shuffleModeEnabled = snapshot.shuffleModeEnabled && !snapshot.isFmMode
+                    queueManager.restorePlaylistSource(snapshot.playlistSource)
+                    player.prepare()
+                    player.playWhenReady = snapshot.playWhenReady
+                    Timber.tag("MusicService").d(
+                        "Restored playback snapshot -> items: ${restoredItems.size}, " +
+                            "index: $restoredIndex, position: ${snapshot.positionMs}, " +
+                            "source: ${snapshot.sourceType}",
+                    )
+                } else {
+                    val preferences = context.dataStore.data.firstOrNull() ?: return@launch
+                    if (player.mediaItemCount > 0 || queueTitle != null) return@launch
+                    val savedShuffleMode = preferences[IsShuffleModeKey] ?: true
+                    val savedRepeatMode = preferences[RepeatModeKey] ?: Player.REPEAT_MODE_ALL
+                    player.shuffleModeEnabled = savedShuffleMode
+                    player.repeatMode = savedRepeatMode
+                    Timber.tag("MusicService").d(
+                        "Restored legacy state -> shuffle: $savedShuffleMode, repeat: $savedRepeatMode",
+                    )
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Timber.tag("MusicService").e(error, "Unable to restore playback snapshot")
+            } finally {
+                isRestoringPlayback = false
+                // Save a queue selected during loading, but never replace disk data
+                // with an empty queue after a failed or cancelled startup read.
+                if (currentCoroutineContext().isActive && player.mediaItemCount > 0) {
+                    schedulePlaybackSnapshot()
+                }
             }
-        } catch (error: Exception) {
-            Timber.tag("MusicService").e(error, "Unable to restore playback snapshot")
-        } finally {
-            isRestoringPlayback = false
         }
     }
 
@@ -675,6 +693,7 @@ class MusicService : MediaLibraryService(),
         if (::systemLyricsBridge.isInitialized) systemLyricsBridge.release()
         sourceRecoveryJob?.cancel()
         periodicSnapshotJob?.cancel()
+        playbackRestoreJob?.cancel()
         playbackSnapshotJob?.cancel()
         automaticCacheJob?.cancel()
         if (::playbackHistoryReporter.isInitialized) {
