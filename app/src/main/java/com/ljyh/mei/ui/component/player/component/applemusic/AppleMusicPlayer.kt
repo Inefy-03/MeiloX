@@ -50,6 +50,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.State
 import androidx.compose.ui.Alignment
+import androidx.compose.foundation.Image
+import com.ljyh.mei.ui.component.player.LocalPlayerArtwork
+import com.ljyh.mei.ui.component.sheet.playerArtwork
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
@@ -67,11 +71,6 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
-import coil3.compose.AsyncImage
-import coil3.request.ImageRequest
-import coil3.request.crossfade
-import coil3.size.Precision
-import coil3.size.Size
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
@@ -98,12 +97,6 @@ import com.ljyh.mei.utils.UnitUtils.toPx
 import com.ljyh.mei.utils.audio.AudioVisualizerManager
 import kotlin.math.min
 
-private class MiniPlayerCoverBoundsHolder {
-    var value: Rect? = null
-}
-
-
-
 @OptIn(UnstableApi::class)
 @Composable
 fun AppleMusicPlayer(
@@ -126,9 +119,9 @@ fun AppleMusicPlayer(
     // --- Apple Music 特定状态 ---
     var showLyrics by remember { mutableStateOf(false) }
     var playerBoundsInRoot by remember { mutableStateOf<Rect?>(null) }
-    val miniCoverBoundsInRoot = remember { MiniPlayerCoverBoundsHolder() }
 
     // --- 从状态容器获取数据 ---
+    val sharedArtwork = LocalPlayerArtwork.current
     val mediaMetadata by stateContainer.mediaMetadata
     val isPlaying by stateContainer.isPlaying
     val playbackState by stateContainer.playbackState
@@ -139,11 +132,6 @@ fun AppleMusicPlayer(
     val isLiked by stateContainer.isLiked
 
     // --- Apple Music 特定的 LaunchedEffect ---
-    LaunchedEffect(state.isCollapsed) {
-        if (state.isCollapsed) {
-            showLyrics = false
-        }
-    }
     BackHandler(enabled = state.isExpanded && showLyrics) {
         showLyrics = false
     }
@@ -156,14 +144,16 @@ fun AppleMusicPlayer(
         transitionSpec = { spring(stiffness = Spring.StiffnessLow) }
     ) { if (it) 1f else 0f }
 
-    val playbackCoverScale by animateFloatAsState(
+    val animatedPlaybackCoverScale by animateFloatAsState(
         targetValue = if (isPlaying) 1f else 0.9f,
-        animationSpec = spring(
+        animationSpec = if (state.isExpanded) spring(
             dampingRatio = Spring.DampingRatioMediumBouncy,
             stiffness = Spring.StiffnessLow
-        ),
+        ) else androidx.compose.animation.core.snap(),
         label = "AppleMusicCoverScale"
     )
+
+    val playbackCoverScale = if (state.isExpanded) animatedPlaybackCoverScale else if (isPlaying) 1f else 0.9f
 
     val sheetProgress = state.progress
 
@@ -193,25 +183,6 @@ fun AppleMusicPlayer(
         val isCompactHeight = maxHeightPx < with(density) { 600.dp.toPx() }
 
         // --- 1. 定义关键尺寸参数 ---
-
-        // A. Mini Player (Bottom)
-        val measuredMiniBounds = miniCoverBoundsInRoot.value
-        val measuredPlayerBounds = playerBoundsInRoot
-        val miniSize = measuredMiniBounds?.width?.takeIf { it > 0f }
-            ?: with(density) { 32.dp.toPx() }
-        val miniStart = if (measuredMiniBounds != null && measuredPlayerBounds != null) {
-            measuredMiniBounds.left - measuredPlayerBounds.left
-        } else {
-            with(density) { (20.dp + 60.dp * compactMiniPlayerProgress.value).toPx() }
-        }
-        val miniRadius = with(density) { ThumbnailCornerRadius.toPx() }
-        val collapsedBoundPx = with(density) { state.collapsedBound.toPx() }
-        val miniAbsTop = if (measuredMiniBounds != null && measuredPlayerBounds != null) {
-            measuredMiniBounds.top - measuredPlayerBounds.top
-        } else {
-            maxHeightPx - collapsedBoundPx +
-                with(density) { (8.dp + miniPlayerVerticalOffset()).toPx() }
-        }
 
         // B. Normal Expanded
         val statusBarTop = with(density) { WindowInsets.statusBars.getTop(this).toFloat() }
@@ -247,19 +218,13 @@ fun AppleMusicPlayer(
         val targetStart = lerp(normalStart, headerStart, lyricAnimFraction)
         val targetRadius = with(density) { lerp(12.dp.toPx(), headerRadius, lyricAnimFraction) }
 
-        val finalSize = lerp(miniSize, targetSize, sheetProgress)
-        val finalTop = lerp(miniAbsTop, targetTop, sheetProgress)
-        val finalStart = lerp(miniStart, targetStart, sheetProgress)
-        val finalRadius = lerp(miniRadius, targetRadius, sheetProgress)
-
-        // Apply playback scaling only to the expanded artwork. Keeping the mini-player
-        // and lyric header at full scale preserves their bounds, while center scaling
-        // keeps every responsive artwork size on its existing motion path.
-        val expandedCoverFraction = sheetProgress * (1f - lyricAnimFraction)
-        val finalCoverScale = lerp(1f, playbackCoverScale, expandedCoverFraction)
-
-        val shadowAlpha = if (sheetProgress > 0.8f) (1f - lyricAnimFraction) else 0f
-        var mShadowElevation = 16.dp * shadowAlpha
+        // The overlay owns sheet motion. This endpoint only owns lyric/paused artwork layout.
+        val finalSize = targetSize
+        val finalTop = targetTop
+        val finalStart = targetStart
+        val finalRadius = targetRadius
+        val finalCoverScale = lerp(1f, playbackCoverScale, 1f - lyricAnimFraction)
+        val mShadowElevation = 16.dp * (1f - lyricAnimFraction)
 
         val coverUrl = mediaMetadata?.coverUrl
         val audioVisualizerManager = remember { AudioVisualizerManager(context) }
@@ -272,11 +237,6 @@ fun AppleMusicPlayer(
             val player = stateContainer.playerConnection.player as? ExoPlayer
             player?.audioSessionId?.let(audioVisualizerManager::attachToPlayer)
         }
-        // Keep the mesh and expanded artwork out of the first part of the capsule reveal;
-        // this avoids a bright frame flashing through the iOS glass transition.
-        val playerBackgroundAlpha = ((sheetProgress - 0.12f) / 0.28f).coerceIn(0f, 1f)
-
-
         // --- 3. UI Structure ---
         BottomSheet(
             state = state,
@@ -284,7 +244,7 @@ fun AppleMusicPlayer(
             backgroundColor = backgroundColor,
             collapsedDragOffset = miniPlayerVerticalOffset,
             collapsedDragHeight = MiniPlayerHeight,
-            collapsedContentPadding = 2.dp,
+            transitionBackdrop = collapsedBackdrop,
             onDismiss = {
                 stateContainer.playerConnection.player.stop()
                 stateContainer.playerConnection.player.clearMediaItems()
@@ -302,7 +262,7 @@ fun AppleMusicPlayer(
                     imageUrl = coverUrl,
                     audioVisualizerManager = audioVisualizerManager,
                     isPlaying = isPlaying,
-                    alpha = playerBackgroundAlpha,
+                    alpha = 1f,
                     backdrop = playerBackgroundBackdrop,
                 )
             },
@@ -313,9 +273,6 @@ fun AppleMusicPlayer(
                     backdrop = collapsedBackdrop,
                     compactProgress = compactMiniPlayerProgress,
                     onClick = state::expandSoft,
-                    onCoverBoundsChanged = { bounds ->
-                        miniCoverBoundsInRoot.value = bounds
-                    },
                 )
             }
         ) {
@@ -392,7 +349,7 @@ fun AppleMusicPlayer(
                         ((fraction - enterThreshold) / (1f - enterThreshold)).coerceIn(
                             0f,
                             1f
-                        ) * sheetProgress
+                        )
                     } else {
                         0f
                     }
@@ -515,62 +472,60 @@ fun AppleMusicPlayer(
                     }
                 }
             }
-        }
-
-        Box(
-            modifier = Modifier
-                .layerBackdrop(playerCoverBackdrop)
-                .trackBackdropPosition(playerCoverBackdrop),
-        ) {
-            AnimatedContent(
-                targetState = mediaMetadata,
-                transitionSpec = {
-                    (fadeIn(animationSpec = tween(durationMillis = 400)) +
-                            scaleIn(initialScale = 0.92f, animationSpec = tween(durationMillis = 400)))
-                        .togetherWith(
-                            fadeOut(animationSpec = tween(durationMillis = 400))
-                        )
-                },
-                label = "CoverTransition",
+            Box(
                 modifier = Modifier
-                    .graphicsLayer {
-                        alpha = state.revealProgress
-                        translationX = finalStart
-                        translationY = finalTop
-                        scaleX = finalCoverScale
-                        scaleY = finalCoverScale
-                        transformOrigin = TransformOrigin.Center
-                        shadowElevation = mShadowElevation.toPx()
-                        shape = ContinuousRoundedRectangle(finalRadius)
-                        clip = true
-                    }
-                    .size(
-                        width = with(density) { finalSize.toDp() },
-                        height = with(density) { finalSize.toDp() }
-                    )
-                    .clickable {
-                        if (!state.isExpanded) {
-                            state.expandSoft()
-                        } else {
-                            showLyrics = !showLyrics
+                    .layerBackdrop(playerCoverBackdrop)
+                    .trackBackdropPosition(playerCoverBackdrop),
+            ) {
+                AnimatedContent(
+                    targetState = mediaMetadata,
+                    transitionSpec = {
+                        (fadeIn(animationSpec = tween(durationMillis = 400)) +
+                                scaleIn(initialScale = 0.92f, animationSpec = tween(durationMillis = 400)))
+                            .togetherWith(
+                                fadeOut(animationSpec = tween(durationMillis = 400))
+                            )
+                    },
+                    label = "CoverTransition",
+                    modifier = Modifier
+                        .graphicsLayer {
+                            alpha = 1f
+                            translationX = finalStart
+                            translationY = finalTop
+                            scaleX = finalCoverScale
+                            scaleY = finalCoverScale
+                            transformOrigin = TransformOrigin.Center
+                            shadowElevation = if (state.isExpanded) mShadowElevation.toPx() else 0f
+                            shape = ContinuousRoundedRectangle(finalRadius)
+                            clip = true
                         }
+                        .size(
+                            width = with(density) { finalSize.toDp() },
+                            height = with(density) { finalSize.toDp() }
+                        )
+                        .playerArtwork(
+                            cornerRadius = with(density) { finalRadius.toDp() },
+                        )
+                        .then(
+                            if (state.isExpanded) Modifier.clickable { showLyrics = !showLyrics }
+                            else Modifier.clearAndSetSemantics { },
+                        )
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                ) { currentMetadata ->
+                    if (currentMetadata != null) {
+                        val retainedPainter = remember(currentMetadata.coverUrl) {
+                            sharedArtwork?.takeIf { it.first == currentMetadata.coverUrl }?.second
+                        }
+                        val painter = sharedArtwork?.takeIf { it.first == currentMetadata.coverUrl }?.second ?: retainedPainter
+                        if (painter != null) Image(
+                            painter = painter,
+                            contentDescription = "Cover",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    } else {
+                        Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant))
                     }
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-            ) { currentMetadata ->
-                if (currentMetadata != null) {
-                    AsyncImage(
-                        model = ImageRequest.Builder(LocalContext.current)
-                            .data(currentMetadata.coverUrl)
-                            .size(Size.ORIGINAL)
-                            .precision(Precision.EXACT)
-                            .crossfade(true)
-                            .build(),
-                        contentDescription = "Cover",
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
-                    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant))
                 }
             }
         }

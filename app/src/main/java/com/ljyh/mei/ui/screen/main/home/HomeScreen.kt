@@ -235,7 +235,12 @@ fun HomeScreen(
                 }
 
                 Resource.Loading -> {
-                    // 这里可以加 Loading Skeleton
+                    HomeShimmer(
+                        contentPadding = PaddingValues(
+                            top = pinnedPadding.calculateTopPadding(),
+                            bottom = systemBarsPadding.calculateBottomPadding() + 16.dp,
+                        ),
+                    )
                 }
             }
         }

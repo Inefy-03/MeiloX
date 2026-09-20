@@ -5,11 +5,13 @@ import android.os.Handler
 import android.os.Looper
 import android.os.Build
 import android.view.PixelCopy
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import coil3.ImageLoader
@@ -23,6 +25,7 @@ import com.ljyh.mei.constants.MeshPlayingKey
 import com.ljyh.mei.constants.MeshRenderScaleKey
 import com.ljyh.mei.constants.MeshStaticModeKey
 import com.ljyh.mei.constants.MeshSubdivisionKey
+import com.ljyh.mei.ui.component.sheet.LocalPlayerSheet
 import com.ljyh.mei.ui.component.player.LocalPlayerBackdropFrame
 import com.ljyh.mei.ui.component.player.component.mesh.AlbumTextureProcessor
 import com.ljyh.mei.ui.component.player.component.mesh.MeshBackgroundView
@@ -58,6 +61,13 @@ fun FluidBackground(
 ) {
     val context = LocalContext.current
     val lifecycleStarted by rememberLifecycleStarted()
+    val sheet = LocalPlayerSheet.current
+    val transitioning = sheet?.state?.isTransitioning == true
+    val captureInterval = if (transitioning) 16L else BackdropCaptureIntervalMillis
+    var surfaceReady by remember { mutableStateOf(false) }
+    val expanded = sheet == null || sheet.state.isExpanded
+    val surfaceAlpha = if (expanded && surfaceReady) alpha.coerceIn(0f, 1f) else 0f
+    // Keep producing frames while the transition samples this separate Surface.
     val backgroundVisible = alpha > 0.01f
     val backgroundActive = lifecycleStarted && backgroundVisible
     val bass by produceState(0f, audioVisualizerManager, backgroundActive) {
@@ -117,11 +127,13 @@ fun FluidBackground(
     // pixels cannot be captured by a Compose layer recording, so sheets sample this instead.
     val backdropFrame = LocalPlayerBackdropFrame.current
     LaunchedEffect(backdropFrame, albumBitmap) {
-        backdropFrame?.value = withContext(Dispatchers.Default) {
+        if (albumBitmap == null || backdropFrame == null || backdropFrame.value != null) return@LaunchedEffect
+        val fallback = withContext(Dispatchers.Default) {
             // The mesh renders AlbumTextureProcessor's heavily blurred, darkened output;
             // keep this as the immediate fallback until the first PixelCopy frame arrives.
             albumBitmap?.let(AlbumTextureProcessor::process)
         }?.asImageBitmap()
+        if (backdropFrame.value == null) backdropFrame.value = fallback
     }
 
     // 2. 组装当前需要传递给 View 的所有状态
@@ -154,18 +166,19 @@ fun FluidBackground(
     // instead; glass blurs it heavily, so this resolution preserves the visual result without
     // reading a full-screen buffer every frame. Static mode captures through the mesh fade-in
     // and then stops, while animated mode keeps the sample moving at roughly 15 fps.
-    LaunchedEffect(meshView, backdropFrame, albumBitmap, staticMode, shouldAnimate, backgroundActive) {
+    LaunchedEffect(meshView, backdropFrame, albumBitmap, staticMode, shouldAnimate, backgroundActive, transitioning) {
         if (!backgroundActive) return@LaunchedEffect
         val view = meshView ?: return@LaunchedEffect
         val target = backdropFrame ?: return@LaunchedEffect
         var attempts = 0
         val continuous = !staticMode && shouldAnimate
 
-        delay(BackdropCaptureIntervalMillis)
+        delay(captureInterval)
         while (isActive && (continuous || attempts < StaticBackdropCaptureAttempts)) {
             val sourceWidth = view.width
             val sourceHeight = view.height
-            if (view.isAttachedToWindow && sourceWidth > 0 && sourceHeight > 0) {
+            if (!view.hasRenderedAlbum) surfaceReady = false
+            if (view.hasRenderedAlbum && view.isAttachedToWindow && sourceWidth > 0 && sourceHeight > 0) {
                 val shortSide = minOf(sourceWidth, sourceHeight).toFloat()
                 val longSide = maxOf(sourceWidth, sourceHeight).toFloat()
                 val scale = minOf(
@@ -192,16 +205,24 @@ fun FluidBackground(
                 captureState[2] = (captureState[2] + 1) % captureBuffers.size
                 if (copySurfaceFrame(view, bitmap, pixelCopyHandler)) {
                     target.value = bitmap.asImageBitmap()
+                    surfaceReady = true
                 }
                 attempts++
             }
-            delay(BackdropCaptureIntervalMillis)
+            delay(captureInterval)
         }
     }
 
     // 3. 去掉过于严格的版本限制 (只要设备存在就能初始化，低端机 GLES 3.0 兼容性极好)
     // 如果你想绝对保险，可以写 >= Build.VERSION_CODES.LOLLIPOP (21)
     Box(modifier.fillMaxSize()) {
+        if (expanded && !surfaceReady) {
+            Canvas(Modifier.fillMaxSize()) {
+                backdropFrame?.value?.let { image ->
+                    drawImage(image, dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt()))
+                }
+            }
+        }
         // This empty Compose node owns the recording coordinates. Its custom Backdrop draw
         // reads only [backdropFrame], so the native GL Surface is never re-drawn or re-clipped.
         Box(
@@ -214,7 +235,7 @@ fun FluidBackground(
             factory = { ctx ->
                 MeshBackgroundView(ctx).apply {
                     meshView = this
-                    this.alpha = alpha.coerceIn(0f, 1f)
+                    this.alpha = surfaceAlpha
                     // 初始化时的默认值
                     setFlowSpeed(flowSpeed)
                     setRenderScale(renderScale)
@@ -229,7 +250,7 @@ fun FluidBackground(
             update = { view ->
                 // GLSurfaceView owns a native Surface; driving the View alpha avoids a bright
                 // first frame escaping a Compose graphics layer during sheet expansion.
-                view.alpha = alpha.coerceIn(0f, 1f)
+                view.alpha = surfaceAlpha
 
                 view.updateVolume(bass * volumeScale)
             },

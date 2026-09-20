@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.LocalContentColor
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.derivedStateOf
@@ -18,6 +19,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
@@ -68,6 +70,8 @@ import kotlin.math.cos
 import kotlin.math.ceil
 import kotlin.math.sin
 import kotlin.math.tanh
+
+data class GlassPressHighlight(val progress: Float = 0f, val position: Offset = Offset(0.5f, 0.5f))
 
 enum class GlassEmphasis {
     Regular,
@@ -418,6 +422,9 @@ fun GlassSurface(
     opticalHighlightBoost: Float = 0f,
     sampleBackdrop: Boolean = true,
     exportedBackdrop: LayerBackdrop? = null,
+    onVisualBoundsChanged: ((Rect, GlassPressHighlight) -> Unit)? = null,
+    pressHighlight: GlassPressHighlight? = null,
+    cancelPressFeedback: Boolean = false,
     onClick: (() -> Unit)? = null,
     contentAlignment: Alignment = Alignment.Center,
     content: @Composable BoxScope.() -> Unit,
@@ -429,19 +436,34 @@ fun GlassSurface(
     val interactiveHighlight = remember(animationScope) {
         InteractiveHighlight(animationScope = animationScope)
     }
+    LaunchedEffect(interactiveHighlight, cancelPressFeedback) {
+        if (cancelPressFeedback) interactiveHighlight.cancelPress()
+    }
     val surfaceColor = when (emphasis) {
         GlassEmphasis.Regular -> colors.container
         GlassEmphasis.Prominent -> colors.prominentContainer
     }
-    val pressProgressState = remember(interactiveHighlight) {
-        derivedStateOf { interactiveHighlight.pressProgress }
+    val pressProgressState = remember(interactiveHighlight, pressHighlight) {
+        derivedStateOf { pressHighlight?.progress ?: interactiveHighlight.pressProgress }
     }
     val shapeProvider = remember(shape) { { shape } }
-    val dragScaleLayerBlock: GraphicsLayerScope.() -> Unit = remember(interactiveHighlight) {
+    val dragScaleLayerBlock: GraphicsLayerScope.() -> Unit = remember(interactiveHighlight, onVisualBoundsChanged) {
         {
             applyGlassDragScale(
                 pressProgress = interactiveHighlight.pressProgress,
                 offset = interactiveHighlight.offset,
+            )
+            onVisualBoundsChanged?.invoke(
+                Rect(
+                    size.width * (1f - scaleX) / 2f + translationX,
+                    size.height * (1f - scaleY) / 2f + translationY,
+                    size.width * (1f + scaleX) / 2f + translationX,
+                    size.height * (1f + scaleY) / 2f + translationY,
+                ),
+                GlassPressHighlight(interactiveHighlight.pressProgress,
+                    interactiveHighlight.highlightPosition(size).let {
+                        Offset(it.x / size.width.coerceAtLeast(1f), it.y / size.height.coerceAtLeast(1f))
+                    }),
             )
         }
     }
@@ -553,7 +575,12 @@ fun GlassSurface(
 
     Box(
         modifier = surfaceModifier
-            .then(if (onClick != null && enabled) interactiveHighlight.modifier else Modifier)
+            .then(
+                if (pressHighlight != null) interactiveHighlight.highlightModifier(
+                    progressProvider = { pressHighlight.progress },
+                    positionProvider = { Offset(it.width * pressHighlight.position.x, it.height * pressHighlight.position.y) },
+                ) else if (onClick != null && enabled) interactiveHighlight.modifier else Modifier,
+            )
             .then(
                 if (onClick != null) {
                     Modifier.clickable(
