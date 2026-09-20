@@ -85,6 +85,10 @@ class MeshGradientRenderer : GLSurfaceView.Renderer {
     private var staticMode: Boolean = false
     private var isStatic: Boolean = false
 
+    @Volatile
+    var hasRenderedAlbum = false
+        private set
+
     private var pendingAlbum: Bitmap? = null
     private var albumChanged: Boolean = false
     private var currentAlbum: Bitmap? = null
@@ -106,6 +110,7 @@ class MeshGradientRenderer : GLSurfaceView.Renderer {
     }
 
     override fun onSurfaceCreated(gl: GL10?, config: javax.microedition.khronos.egl.EGLConfig?) {
+        hasRenderedAlbum = false
 
         Timber.tag(TAG).d("GPU 渲染器: ${GLES30.glGetString(GLES30.GL_RENDERER)}")
         Timber.tag(TAG).d("GPU 厂商: ${GLES30.glGetString(GLES30.GL_VENDOR)}")
@@ -198,6 +203,7 @@ class MeshGradientRenderer : GLSurfaceView.Renderer {
         }
 
         GLES30.glDisable(GLES30.GL_BLEND)
+        hasRenderedAlbum = true
     }
 
     private fun processPendingAlbum() {
@@ -225,7 +231,8 @@ class MeshGradientRenderer : GLSurfaceView.Renderer {
             processed.recycle()
 
             isStatic = false
-            val newState = MeshState(mesh, textureId, 0f, 1f)
+            // A new surface has no previous image to crossfade from.
+            val newState = MeshState(mesh, textureId, if (meshStates.isEmpty()) 1f else 0f, 1f)
             for (existing in meshStates) {
                 existing.targetAlpha = -1f
             }
@@ -496,6 +503,7 @@ class MeshGradientRenderer : GLSurfaceView.Renderer {
 class MeshBackgroundView(context: Context) : GLSurfaceView(context) {
 
     private val renderer = MeshGradientRenderer()
+    val hasRenderedAlbum get() = renderer.hasRenderedAlbum
     private var lastFlowSpeed = renderer.flowSpeed
     private var lastRenderScale = renderer.renderScale
     private var lastSubdivision = renderer.subdivision
