@@ -8,6 +8,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -45,8 +46,6 @@ import com.ljyh.mei.ui.glass.SheetGroupedListBackgroundAlpha
 import com.ljyh.mei.ui.glass.rememberCrossWindowBackdrop
 import coil3.compose.rememberAsyncImagePainter
 import coil3.request.ImageRequest
-import coil3.request.crossfade
-import coil3.size.Size
 import coil3.size.Precision
 import androidx.compose.runtime.key
 import androidx.compose.runtime.collectAsState
@@ -111,10 +110,11 @@ fun BottomSheetPlayer(
 
     // 创建公共状态容器
     val lifecycleStarted by rememberLifecycleStarted()
+    val sheetCollapsed by remember(state) { derivedStateOf { state.isCollapsed } }
     val stateContainer = rememberPlayerStateContainer(
         playerViewModel = playerViewModel,
         playerConnection = playerConnection,
-        progressUpdatesEnabled = lifecycleStarted && !state.isCollapsed,
+        progressUpdatesEnabled = lifecycleStarted && !sheetCollapsed,
     )
 
     // 创建弹窗处理器
@@ -129,8 +129,11 @@ fun BottomSheetPlayer(
     val artwork = currentMetadata?.coverUrl?.let { url ->
         key(url) {
             url to rememberAsyncImagePainter(
-                ImageRequest.Builder(context).data(url).size(Size.ORIGINAL)
-                    .precision(Precision.EXACT).crossfade(true).build(),
+                ImageRequest.Builder(context)
+                    .data(url)
+                    .size(1440)
+                    .precision(Precision.INEXACT)
+                    .build(),
             )
         }
     }

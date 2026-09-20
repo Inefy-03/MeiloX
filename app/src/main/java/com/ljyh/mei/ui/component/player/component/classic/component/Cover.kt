@@ -26,6 +26,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -76,6 +77,9 @@ fun Cover(
 ) {
     val context = LocalContext.current
     val sheet = LocalPlayerSheet.current
+    val sheetExpanded by remember(sheet) {
+        derivedStateOf { sheet == null || sheet.state.isExpanded }
+    }
     // 获取当前的封面样式设置
     val coverStyle by rememberEnumPreference(CoverStyleKey, defaultValue = CoverStyle.Square)
     val originalCover by rememberPreference(
@@ -91,14 +95,14 @@ fun Cover(
 
     val animatedCoverScale by animateFloatAsState(
         targetValue = if (isPlaying) 1f else 0.9f,
-        animationSpec = if (sheet == null || sheet.state.isExpanded) spring(
+        animationSpec = if (sheetExpanded) spring(
             dampingRatio = Spring.DampingRatioMediumBouncy,
             stiffness = Spring.StiffnessLow
         ) else androidx.compose.animation.core.snap(),
         label = "CoverScale"
     )
 
-    val coverScale = if (sheet == null || sheet.state.isExpanded) animatedCoverScale else if (isPlaying) 1f else 0.9f
+    val coverScale = if (sheetExpanded) animatedCoverScale else if (isPlaying) 1f else 0.9f
 
     var showFullImage by remember { mutableStateOf(false) }
     Box(

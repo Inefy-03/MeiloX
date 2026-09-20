@@ -36,6 +36,8 @@ import com.ljyh.mei.ui.component.sheet.recordPlayerContent
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.boundsInRoot
@@ -54,6 +56,7 @@ import com.kyant.capsule.ContinuousRoundedRectangle
 import com.kyant.shapes.Capsule
 import com.ljyh.mei.R
 import com.ljyh.mei.constants.MiniPlayerHeight
+import com.ljyh.mei.constants.NavigationBarHeight
 import com.ljyh.mei.constants.ThumbnailCornerRadius
 import com.ljyh.mei.data.model.MediaMetadata
 import com.ljyh.mei.extensions.togglePlayPause
@@ -110,6 +113,9 @@ fun MiniPlayer(
     onCoverBoundsChanged: ((Rect) -> Unit)? = null,
 ) {
     val sheet = LocalPlayerSheet.current
+    val sheetTransitioning by remember(sheet) {
+        derivedStateOf { sheet?.state?.isTransitioning == true }
+    }
     val playerConnection = LocalPlayerConnection.current ?: return
     val isPlaying by playerConnection.isPlaying.collectAsState()
     val playbackState by playerConnection.playbackState.collectAsState()
@@ -124,11 +130,17 @@ fun MiniPlayer(
             .fillMaxWidth()
             .height(MiniPlayerHeight)
             .compactMiniPlayerHorizontalPadding(compactProgress)
-            .onGloballyPositioned { sheet?.miniBounds = it.boundsInRoot() },
+            .onGloballyPositioned {
+                // This modifier is outside GlassSurface's press layer. Avoid boundsInRoot,
+                // which can clip the hidden mini player against the moving sheet outline.
+                sheet?.miniBounds = Rect(it.localToRoot(Offset.Zero), Size(it.size.width.toFloat(), it.size.height.toFloat()))
+            },
         backdrop = backdrop,
         shape = Capsule(),
-        onVisualBoundsChanged = { bounds, light -> sheet?.updateMiniVisualBounds(bounds, light) },
-        cancelPressFeedback = sheet?.state?.isTransitioning == true,
+        onVisualBoundsChanged = { bounds, light -> sheet?.updateMiniPressHighlight(bounds, light) },
+        cancelPressFeedback = sheetTransitioning,
+        morphProgress = compactProgress,
+        morphVerticalTravel = NavigationBarHeight - 16.dp,
         style = GlassSurfaceStyle.Navigation,
         onClick = onClick,
     ) {
@@ -136,14 +148,15 @@ fun MiniPlayer(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxSize()
+                .onGloballyPositioned { sheet?.miniLayoutCoordinates = it }
                 .padding(horizontal = 4.dp, vertical = 2.dp)
                 .onGloballyPositioned {
                     sheet?.miniContentCoordinates = it
-                    sheet?.miniContentBounds = it.boundsInRoot()
+                    sheet?.miniLayoutBounds(it)?.let { bounds -> sheet.miniContentBounds = bounds }
                 }
                 .then(
                     if (sheet != null) {
-                        Modifier.recordPlayerContent(sheet.miniContent, { sheet.state.isTransitioning }) { true }
+                        Modifier.recordPlayerContent(sheet, sheet.miniContent) { true }
                     } else Modifier,
                 ),
         ) {
@@ -247,7 +260,9 @@ fun MiniMediaInfo(
                     .onGloballyPositioned { coordinates ->
                         val bounds = coordinates.boundsInRoot()
                         sheet?.miniArtworkCoordinates = coordinates
-                        sheet?.miniArtworkBounds = bounds
+                        sheet?.miniLayoutBounds(coordinates)?.let { layoutBounds ->
+                            sheet.miniArtworkBounds = layoutBounds
+                        }
                         onCoverBoundsChanged?.invoke(bounds)
                     }
                     .drawWithContent { if (sheet?.drawsArtworkOverlay != true) drawContent() }

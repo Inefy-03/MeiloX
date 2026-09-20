@@ -3,18 +3,15 @@ package com.ljyh.mei.ui.component.player.component
 import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
-import android.os.Build
 import android.view.PixelCopy
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
-import coil3.ImageLoader
+import coil3.imageLoader
 import coil3.request.ImageRequest
 import coil3.request.SuccessResult
 import coil3.request.allowHardware
@@ -26,8 +23,8 @@ import com.ljyh.mei.constants.MeshRenderScaleKey
 import com.ljyh.mei.constants.MeshStaticModeKey
 import com.ljyh.mei.constants.MeshSubdivisionKey
 import com.ljyh.mei.ui.component.sheet.LocalPlayerSheet
+import com.ljyh.mei.ui.component.sheet.playerBackgroundAlpha
 import com.ljyh.mei.ui.component.player.LocalPlayerBackdropFrame
-import com.ljyh.mei.ui.component.player.component.mesh.AlbumTextureProcessor
 import com.ljyh.mei.ui.component.player.component.mesh.MeshBackgroundView
 import com.ljyh.mei.ui.component.utils.rememberLifecycleStarted
 import com.ljyh.mei.ui.glass.trackBackdropPosition
@@ -62,16 +59,21 @@ fun FluidBackground(
     val context = LocalContext.current
     val lifecycleStarted by rememberLifecycleStarted()
     val sheet = LocalPlayerSheet.current
-    val transitioning = sheet?.state?.isTransitioning == true
-    val captureInterval = if (transitioning) 16L else BackdropCaptureIntervalMillis
+    val backdropFrame = LocalPlayerBackdropFrame.current
+    val expanded by remember(sheet) {
+        derivedStateOf { sheet == null || sheet.state.isExpanded }
+    }
+    var meshView by remember { mutableStateOf<MeshBackgroundView?>(null) }
     var surfaceReady by remember { mutableStateOf(false) }
-    val expanded = sheet == null || sheet.state.isExpanded
-    val surfaceAlpha = if (expanded && surfaceReady) alpha.coerceIn(0f, 1f) else 0f
-    // Keep producing frames while the transition samples this separate Surface.
     val backgroundVisible = alpha > 0.01f
+    val backgroundOpacity = alpha.coerceIn(0f, 1f)
+    // This composable is mounted only while the sheet is visible. Start the real Surface
+    // immediately so it can render before the opening fade becomes noticeable.
     val backgroundActive = lifecycleStarted && backgroundVisible
-    val bass by produceState(0f, audioVisualizerManager, backgroundActive) {
-        if (backgroundActive) {
+    val audioReactive = backgroundActive && expanded
+    val bass by produceState(0f, audioVisualizerManager, audioReactive) {
+        value = 0f
+        if (audioReactive) {
             audioVisualizerManager.bassValue.collect { value = it }
         }
     }
@@ -83,8 +85,9 @@ fun FluidBackground(
     val (volumeScale) = rememberPreference(MeshLowFreqVolumeKey, defaultValue = 0.1f)
     val (subdivision) = rememberPreference(MeshSubdivisionKey, defaultValue = 50)
 
-    LaunchedEffect(audioVisualizerManager, backgroundActive) {
-        audioVisualizerManager.setCaptureEnabled(backgroundActive)
+    DisposableEffect(audioVisualizerManager, audioReactive) {
+        audioVisualizerManager.setCaptureEnabled(audioReactive)
+        onDispose { audioVisualizerManager.setCaptureEnabled(false) }
     }
 
     // 1. 将图片加载逻辑独立出来，只负责把 Bitmap 提取出来
@@ -95,13 +98,12 @@ fun FluidBackground(
             return@produceState
         }
         withContext(Dispatchers.IO) {
-            val loader = ImageLoader(context)
             val request = ImageRequest.Builder(context)
                 .data(imageUrl)
                 .size(256)
                 .allowHardware(false)
                 .build()
-            val result = loader.execute(request)
+            val result = context.imageLoader.execute(request)
             if (result is SuccessResult) {
                 // Detach from Coil's bitmap pool: the GL renderer owns this instance and
                 // recycles it on track change, which must never corrupt a pooled bitmap.
@@ -111,8 +113,6 @@ fun FluidBackground(
         }
     }
 
-    var meshView by remember { mutableStateOf<MeshBackgroundView?>(null) }
-
     // Push the album exactly once per bitmap change. Calling setAlbum from AndroidView's
     // update block re-fires on every recomposition (sheet animation ~60Hz, bass ~10Hz),
     // and each call restarts the renderer's cross-fade with a new random mesh preset,
@@ -120,20 +120,9 @@ fun FluidBackground(
     LaunchedEffect(meshView, albumBitmap) {
         val view = meshView ?: return@LaunchedEffect
         val bitmap = albumBitmap ?: return@LaunchedEffect
+        // Track changes belong entirely to the GL renderer's crossfade. Keep the current
+        // Surface visible while the next texture loads; never insert a static cover here.
         view.setAlbum(bitmap)
-    }
-
-    // Publish the cover as the player backdrop's recording stand-in: this GL surface's
-    // pixels cannot be captured by a Compose layer recording, so sheets sample this instead.
-    val backdropFrame = LocalPlayerBackdropFrame.current
-    LaunchedEffect(backdropFrame, albumBitmap) {
-        if (albumBitmap == null || backdropFrame == null || backdropFrame.value != null) return@LaunchedEffect
-        val fallback = withContext(Dispatchers.Default) {
-            // The mesh renders AlbumTextureProcessor's heavily blurred, darkened output;
-            // keep this as the immediate fallback until the first PixelCopy frame arrives.
-            albumBitmap?.let(AlbumTextureProcessor::process)
-        }?.asImageBitmap()
-        if (backdropFrame.value == null) backdropFrame.value = fallback
     }
 
     // 2. 组装当前需要传递给 View 的所有状态
@@ -166,18 +155,17 @@ fun FluidBackground(
     // instead; glass blurs it heavily, so this resolution preserves the visual result without
     // reading a full-screen buffer every frame. Static mode captures through the mesh fade-in
     // and then stops, while animated mode keeps the sample moving at roughly 15 fps.
-    LaunchedEffect(meshView, backdropFrame, albumBitmap, staticMode, shouldAnimate, backgroundActive, transitioning) {
+    LaunchedEffect(meshView, backdropFrame, albumBitmap, staticMode, shouldAnimate, backgroundActive) {
         if (!backgroundActive) return@LaunchedEffect
         val view = meshView ?: return@LaunchedEffect
         val target = backdropFrame ?: return@LaunchedEffect
         var attempts = 0
         val continuous = !staticMode && shouldAnimate
 
-        delay(captureInterval)
+        delay(BackdropCaptureIntervalMillis)
         while (isActive && (continuous || attempts < StaticBackdropCaptureAttempts)) {
             val sourceWidth = view.width
             val sourceHeight = view.height
-            if (!view.hasRenderedAlbum) surfaceReady = false
             if (view.hasRenderedAlbum && view.isAttachedToWindow && sourceWidth > 0 && sourceHeight > 0) {
                 val shortSide = minOf(sourceWidth, sourceHeight).toFloat()
                 val longSide = maxOf(sourceWidth, sourceHeight).toFloat()
@@ -204,27 +192,18 @@ fun FluidBackground(
                 val bitmap = captureBuffers[captureState[2]] ?: return@LaunchedEffect
                 captureState[2] = (captureState[2] + 1) % captureBuffers.size
                 if (copySurfaceFrame(view, bitmap, pixelCopyHandler)) {
+                    if (!isActive) return@LaunchedEffect
                     target.value = bitmap.asImageBitmap()
-                    surfaceReady = true
                 }
                 attempts++
             }
-            delay(captureInterval)
+            delay(BackdropCaptureIntervalMillis)
         }
     }
 
-    // 3. 去掉过于严格的版本限制 (只要设备存在就能初始化，低端机 GLES 3.0 兼容性极好)
-    // 如果你想绝对保险，可以写 >= Build.VERSION_CODES.LOLLIPOP (21)
     Box(modifier.fillMaxSize()) {
-        if (expanded && !surfaceReady) {
-            Canvas(Modifier.fillMaxSize()) {
-                backdropFrame?.value?.let { image ->
-                    drawImage(image, dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt()))
-                }
-            }
-        }
         // This empty Compose node owns the recording coordinates. Its custom Backdrop draw
-        // reads only [backdropFrame], so the native GL Surface is never re-drawn or re-clipped.
+        // reads only [backdropFrame], so glass never re-records the native GL Surface.
         Box(
             Modifier
                 .fillMaxSize()
@@ -235,8 +214,8 @@ fun FluidBackground(
             factory = { ctx ->
                 MeshBackgroundView(ctx).apply {
                     meshView = this
-                    this.alpha = surfaceAlpha
-                    // 初始化时的默认值
+                    this.alpha = 0f
+                    onSurfaceReadyChanged = { surfaceReady = it }
                     setFlowSpeed(flowSpeed)
                     setRenderScale(renderScale)
                     setSubdivision(subdivision)
@@ -248,12 +227,14 @@ fun FluidBackground(
                 }
             },
             update = { view ->
-                // GLSurfaceView owns a native Surface; driving the View alpha avoids a bright
-                // first frame escaping a Compose graphics layer during sheet expansion.
-                view.alpha = surfaceAlpha
+                // Only this Surface is visible: no copied frame or curtain handoff at
+                // either anchor. Read progress here to update just the native view.
+                view.alpha = if (surfaceReady) backgroundOpacity *
+                    (sheet?.state?.progress?.let(::playerBackgroundAlpha) ?: 1f) else 0f
 
                 view.updateVolume(bass * volumeScale)
             },
+            onRelease = { view -> view.onSurfaceReadyChanged = null },
             modifier = Modifier.fillMaxSize(),
         )
     }

@@ -59,7 +59,6 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -130,9 +129,10 @@ fun AppleMusicPlayer(
     val isDragging by remember { derivedStateOf { stateContainer.isDragging } }
     val lyricLine by remember { derivedStateOf { stateContainer.lyricLine } }
     val isLiked by stateContainer.isLiked
+    val sheetExpanded by remember(state) { derivedStateOf { state.isExpanded } }
 
     // --- Apple Music 特定的 LaunchedEffect ---
-    BackHandler(enabled = state.isExpanded && showLyrics) {
+    BackHandler(enabled = sheetExpanded && showLyrics) {
         showLyrics = false
     }
 
@@ -146,25 +146,15 @@ fun AppleMusicPlayer(
 
     val animatedPlaybackCoverScale by animateFloatAsState(
         targetValue = if (isPlaying) 1f else 0.9f,
-        animationSpec = if (state.isExpanded) spring(
+        animationSpec = if (sheetExpanded) spring(
             dampingRatio = Spring.DampingRatioMediumBouncy,
             stiffness = Spring.StiffnessLow
         ) else androidx.compose.animation.core.snap(),
         label = "AppleMusicCoverScale"
     )
 
-    val playbackCoverScale = if (state.isExpanded) animatedPlaybackCoverScale else if (isPlaying) 1f else 0.9f
+    val playbackCoverScale = if (sheetExpanded) animatedPlaybackCoverScale else if (isPlaying) 1f else 0.9f
 
-    val sheetProgress = state.progress
-
-    val colorScheme = MaterialTheme.colorScheme
-    val backgroundColor = remember(isDark, sheetProgress, colorScheme) {
-        if (isDark && sheetProgress > 0f) {
-            lerp(colorScheme.surfaceContainer, Color.Black, sheetProgress)
-        } else {
-            colorScheme.surfaceContainer
-        }
-    }
 
     BoxWithConstraints(
         modifier = modifier
@@ -241,7 +231,6 @@ fun AppleMusicPlayer(
         BottomSheet(
             state = state,
             modifier = Modifier.fillMaxSize(),
-            backgroundColor = backgroundColor,
             collapsedDragOffset = miniPlayerVerticalOffset,
             collapsedDragHeight = MiniPlayerHeight,
             transitionBackdrop = collapsedBackdrop,
@@ -250,7 +239,7 @@ fun AppleMusicPlayer(
                 stateContainer.playerConnection.player.clearMediaItems()
             },
             onHorizontalSwipe = { direction ->
-                if (!state.isExpanded) {
+                if (!sheetExpanded) {
                     when (direction) {
                         HorizontalSwipeDirection.Left -> stateContainer.playerConnection.seekToNext()
                         HorizontalSwipeDirection.Right -> stateContainer.playerConnection.seekToPrevious()
@@ -495,7 +484,7 @@ fun AppleMusicPlayer(
                             scaleX = finalCoverScale
                             scaleY = finalCoverScale
                             transformOrigin = TransformOrigin.Center
-                            shadowElevation = if (state.isExpanded) mShadowElevation.toPx() else 0f
+                            shadowElevation = if (sheetExpanded) mShadowElevation.toPx() else 0f
                             shape = ContinuousRoundedRectangle(finalRadius)
                             clip = true
                         }
@@ -507,7 +496,7 @@ fun AppleMusicPlayer(
                             cornerRadius = with(density) { finalRadius.toDp() },
                         )
                         .then(
-                            if (state.isExpanded) Modifier.clickable { showLyrics = !showLyrics }
+                            if (sheetExpanded) Modifier.clickable { showLyrics = !showLyrics }
                             else Modifier.clearAndSetSemantics { },
                         )
                         .background(MaterialTheme.colorScheme.surfaceVariant)

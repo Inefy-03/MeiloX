@@ -2,6 +2,10 @@ package com.ljyh.mei.ui.component.player.component.mesh
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BlendMode
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.os.Build
 import android.opengl.GLES30
 import android.opengl.GLSurfaceView
 import android.opengl.GLUtils
@@ -12,6 +16,7 @@ import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import javax.microedition.khronos.opengles.GL10
 import kotlin.math.cos
+import kotlin.math.roundToInt
 
 private const val TAG = "MeshGradientRenderer"
 
@@ -89,6 +94,9 @@ class MeshGradientRenderer : GLSurfaceView.Renderer {
     var hasRenderedAlbum = false
         private set
 
+    @Volatile
+    var onSurfaceReadyChanged: ((Boolean) -> Unit)? = null
+
     private var pendingAlbum: Bitmap? = null
     private var albumChanged: Boolean = false
     private var currentAlbum: Bitmap? = null
@@ -111,6 +119,7 @@ class MeshGradientRenderer : GLSurfaceView.Renderer {
 
     override fun onSurfaceCreated(gl: GL10?, config: javax.microedition.khronos.egl.EGLConfig?) {
         hasRenderedAlbum = false
+        onSurfaceReadyChanged?.invoke(false)
 
         Timber.tag(TAG).d("GPU 渲染器: ${GLES30.glGetString(GLES30.GL_RENDERER)}")
         Timber.tag(TAG).d("GPU 厂商: ${GLES30.glGetString(GLES30.GL_VENDOR)}")
@@ -203,7 +212,10 @@ class MeshGradientRenderer : GLSurfaceView.Renderer {
         }
 
         GLES30.glDisable(GLES30.GL_BLEND)
-        hasRenderedAlbum = true
+        if (!hasRenderedAlbum) {
+            hasRenderedAlbum = true
+            onSurfaceReadyChanged?.invoke(true)
+        }
     }
 
     private fun processPendingAlbum() {
@@ -504,6 +516,7 @@ class MeshBackgroundView(context: Context) : GLSurfaceView(context) {
 
     private val renderer = MeshGradientRenderer()
     val hasRenderedAlbum get() = renderer.hasRenderedAlbum
+    var onSurfaceReadyChanged: ((Boolean) -> Unit)? = null
     private var lastFlowSpeed = renderer.flowSpeed
     private var lastRenderScale = renderer.renderScale
     private var lastSubdivision = renderer.subdivision
@@ -511,8 +524,16 @@ class MeshBackgroundView(context: Context) : GLSurfaceView(context) {
     private var lastPlaying = true
     private var renderingRequested = true
     private var hostStarted = true
+    private val legacyHolePaint = if (Build.VERSION.SDK_INT < 34) {
+        Paint().apply { blendMode = BlendMode.DST_OUT }
+    } else null
 
     init {
+        // Readiness is a Surface lifecycle event, not a track-change or PixelCopy event.
+        // Dispatch only the first album frame and context recreation to the UI thread.
+        renderer.onSurfaceReadyChanged = { ready ->
+            post { onSurfaceReadyChanged?.invoke(ready) }
+        }
         setEGLContextClientVersion(3)
         setEGLConfigChooser(8, 8, 8, 8, 0, 0)
         setRenderer(renderer)
@@ -522,6 +543,25 @@ class MeshBackgroundView(context: Context) : GLSurfaceView(context) {
     fun setAlbum(bitmap: Bitmap) {
         queueEvent { renderer.setAlbum(bitmap) }
         requestRender()
+    }
+
+    // Android 13 ignores fractional SurfaceView alpha. This view has no foreground or
+    // children: replace its opaque CLEAR hole with an alpha-modulated DST_OUT hole there.
+    // It still exposes the same native Surface, respects the parent's sheet clip, and does
+    // not introduce a bitmap proxy or an offscreen alpha layer. Android 14+ does this itself.
+    override fun draw(canvas: Canvas) {
+        if (legacyHolePaint != null) drawLegacySurfaceHole(canvas) else super.draw(canvas)
+    }
+
+    override fun dispatchDraw(canvas: Canvas) {
+        if (legacyHolePaint != null) drawLegacySurfaceHole(canvas) else super.dispatchDraw(canvas)
+    }
+
+    private fun drawLegacySurfaceHole(canvas: Canvas) {
+        val paint = legacyHolePaint ?: return
+        if (!hasRenderedAlbum || !holder.surface.isValid) return
+        paint.alpha = (alpha.coerceIn(0f, 1f) * 255f).roundToInt()
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
     }
 
     fun setRenderingRequested(active: Boolean) {

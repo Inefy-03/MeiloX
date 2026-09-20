@@ -383,6 +383,7 @@ class MainActivity : ComponentActivity() {
 
             }
             var navigationBarVisible by remember { mutableStateOf(true) }
+            val scrollPlayerSheet = remember { mutableStateOf<BottomSheetState?>(null) }
             val searchActiveState = rememberUpdatedState(active)
             val nestedScrollConnection = remember {
                 object : NestedScrollConnection {
@@ -391,6 +392,12 @@ class MainActivity : ComponentActivity() {
                         available: Offset,
                         source: NestedScrollSource
                     ): Offset {
+                        // Read the actual sheet state for every event. Page scrolling remains
+                        // unconsumed, but cannot move the mini player's return target mid-flight.
+                        val sheet = scrollPlayerSheet.value
+                        if (sheet != null && !sheet.isCollapsed && !sheet.isDismissed) {
+                            return Offset.Zero
+                        }
                         val route = navController.currentRoute
                         val handlesNavigationBar = !searchActiveState.value &&
                             (route == null ||
@@ -589,6 +596,14 @@ class MainActivity : ComponentActivity() {
                         collapsedBound = collapsedBound,
                         expandedBound = maxHeight,
                     )
+                    DisposableEffect(playerBottomSheetState) {
+                        scrollPlayerSheet.value = playerBottomSheetState
+                        onDispose {
+                            if (scrollPlayerSheet.value === playerBottomSheetState) {
+                                scrollPlayerSheet.value = null
+                            }
+                        }
+                    }
                     val windowInsetsController = remember {
                         WindowInsetsControllerCompat(window, window.decorView)
                     }
@@ -1158,6 +1173,8 @@ private fun AnimatedBottomNavigationRow(
                 backdrop = backdrop,
                 style = GlassSurfaceStyle.Navigation,
                 modifier = Modifier.size(64.dp - 16.dp * progress),
+                morphProgress = compactProgress,
+                morphCaptureWidth = 64.dp,
             ) {
                 SfIcon(
                     SfSymbol.Search,

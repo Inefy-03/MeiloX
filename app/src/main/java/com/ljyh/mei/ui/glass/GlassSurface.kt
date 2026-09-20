@@ -425,6 +425,9 @@ fun GlassSurface(
     onVisualBoundsChanged: ((Rect, GlassPressHighlight) -> Unit)? = null,
     pressHighlight: GlassPressHighlight? = null,
     cancelPressFeedback: Boolean = false,
+    morphProgress: androidx.compose.runtime.State<Float>? = null,
+    morphCaptureWidth: Dp? = null,
+    morphVerticalTravel: Dp = 0.dp,
     onClick: (() -> Unit)? = null,
     contentAlignment: Alignment = Alignment.Center,
     content: @Composable BoxScope.() -> Unit,
@@ -472,7 +475,30 @@ fun GlassSurface(
     // backdrop for that mode so the button remains a glass surface without lens/blur
     // sampling of the player window.
     val surfaceBackdrop = if (sampleBackdrop) backdrop else emptyBackdrop()
-    val glassModifier = if (style == GlassSurfaceStyle.Navigation) {
+    val morphing = remember(morphProgress) {
+        derivedStateOf {
+            morphProgress?.value?.let { it != 0f && it != 1f } == true
+        }
+    }.value
+    val morphGlassModifier = if (morphProgress != null && style == GlassSurfaceStyle.Navigation &&
+        sampleBackdrop && emphasis == GlassEmphasis.Regular
+    ) {
+        rememberMorphingNavigationGlass(
+            backdrop = surfaceBackdrop,
+            active = morphing,
+            shape = shape,
+            tint = navigationSurfaceColor ?: surfaceColor,
+            pressProgress = { pressProgressState.value },
+            layerBlock = dragScaleLayerBlock,
+            tintMultiplier = navigationSurfaceAlphaMultiplier,
+            captureWidth = morphCaptureWidth,
+            verticalTravel = morphVerticalTravel,
+            morphProgress = { morphProgress.value },
+        )
+    } else null
+    val glassModifier = if (morphing && morphGlassModifier != null) {
+        morphGlassModifier
+    } else if (style == GlassSurfaceStyle.Navigation) {
         val containerColor = navigationSurfaceColor ?: surfaceColor
         remember(
             surfaceBackdrop,
@@ -647,6 +673,8 @@ fun GlassIconButton(
     enabled: Boolean = true,
     emphasis: GlassEmphasis = GlassEmphasis.Regular,
     sampleBackdrop: Boolean = true,
+    morphProgress: androidx.compose.runtime.State<Float>? = null,
+    morphCaptureWidth: Dp? = null,
     content: @Composable BoxScope.() -> Unit,
 ) {
     GlassSurface(
@@ -659,6 +687,8 @@ fun GlassIconButton(
         emphasis = emphasis,
         enabled = enabled,
         sampleBackdrop = sampleBackdrop,
+        morphProgress = morphProgress,
+        morphCaptureWidth = morphCaptureWidth,
         onClick = onClick,
         content = content,
     )

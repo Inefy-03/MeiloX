@@ -145,6 +145,7 @@ fun <T> GlassBottomBar(
 ) {
     require(items.isNotEmpty())
     val compact = compactProgress.coerceIn(0f, 1f)
+    val morphing = compactProgress != 0f && compactProgress != 1f
     val onSelectedState = rememberUpdatedState(onSelected)
     val stableOnSelected: (T) -> Unit = remember {
         { key -> onSelectedState.value(key) }
@@ -340,7 +341,15 @@ fun <T> GlassBottomBar(
                 scaleY = scale
             }
         }
-        val navigationGlassModifier = remember(
+        val morphingNavigationGlass = rememberMorphingNavigationGlass(
+            backdrop = backdrop,
+            active = morphing,
+            shape = Capsule(),
+            tint = containerColor,
+            pressProgress = { pressProgressState.value },
+            layerBlock = pressLayerBlock,
+        )
+        val navigationGlassModifier = if (morphing) morphingNavigationGlass else remember(
             backdrop,
             containerColor,
             pressProgressState,
@@ -357,7 +366,17 @@ fun <T> GlassBottomBar(
         val hiddenLayerBackdropModifier = remember(tabsBackdrop) {
             Modifier.layerBackdrop(tabsBackdrop)
         }
-        val hiddenBackdropModifier = remember(
+        val morphingHiddenGlass = rememberMorphingNavigationGlass(
+            backdrop = backdrop,
+            active = morphing,
+            shape = Capsule(),
+            tint = containerColor,
+            pressProgress = { pressProgressState.value },
+            layerBlock = pressLayerBlock,
+            tintMultiplier = 1f,
+            lensSource = true,
+        )
+        val hiddenBackdropModifier = if (morphing) morphingHiddenGlass else remember(
             backdrop,
             containerColor,
             pressProgressState,
