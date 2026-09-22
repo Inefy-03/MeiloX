@@ -12,6 +12,8 @@ import kotlinx.coroutines.withContext
 internal data class CompletedPlaybackHistorySession(
     val mediaId: String,
     val playedDurationMs: Long,
+    val startedAtMs: Long,
+    val endReason: String,
 )
 
 internal data class PlaybackHistorySessionUpdate(
@@ -22,7 +24,7 @@ internal data class PlaybackHistorySessionUpdate(
 /** Tracks actual playing time for one logical media-item playback session. */
 internal class PlaybackHistorySession {
     private var currentMediaId: String? = null
-    private var hasStarted = false
+    private var startedAtMs: Long? = null
     private var playedDurationMs = 0L
     private var playingSinceRealtimeMs: Long? = null
 
@@ -36,7 +38,13 @@ internal class PlaybackHistorySession {
             currentMediaId = mediaId
             return null
         }
-        val completed = finish(realtimeMs)
+        val endReason = when (reason) {
+            Player.MEDIA_ITEM_TRANSITION_REASON_AUTO,
+            Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT -> "playend"
+            Player.MEDIA_ITEM_TRANSITION_REASON_SEEK -> "ui"
+            else -> "interrupt"
+        }
+        val completed = finish(realtimeMs, endReason)
         currentMediaId = mediaId
         return completed
     }
@@ -58,8 +66,8 @@ internal class PlaybackHistorySession {
             return PlaybackHistorySessionUpdate(completed = completed)
         }
 
-        val startedAtMs = if (!hasStarted) {
-            hasStarted = true
+        val startedAtMs = if (this.startedAtMs == null) {
+            this.startedAtMs = wallClockMs
             wallClockMs
         } else {
             null
@@ -73,15 +81,19 @@ internal class PlaybackHistorySession {
         )
     }
 
-    fun finish(realtimeMs: Long): CompletedPlaybackHistorySession? {
+    fun finish(
+        realtimeMs: Long,
+        endReason: String = "interrupt",
+    ): CompletedPlaybackHistorySession? {
         pauseTimer(realtimeMs)
         val mediaId = currentMediaId
-        val completed = if (hasStarted && mediaId != null) {
-            CompletedPlaybackHistorySession(mediaId, playedDurationMs)
+        val startedAt = startedAtMs
+        val completed = if (startedAt != null && mediaId != null) {
+            CompletedPlaybackHistorySession(mediaId, playedDurationMs, startedAt, endReason)
         } else {
             null
         }
-        hasStarted = false
+        startedAtMs = null
         playedDurationMs = 0L
         playingSinceRealtimeMs = null
         return completed

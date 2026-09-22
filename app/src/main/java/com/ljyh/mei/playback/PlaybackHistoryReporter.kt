@@ -4,7 +4,6 @@ import android.util.Log
 import com.ljyh.mei.data.repository.MeloXRepository
 import com.ljyh.mei.data.repository.PLAYBACK_HISTORY_DIAGNOSTIC_ENDPOINT
 import com.ljyh.mei.data.repository.diagnosticSummary
-import com.ljyh.mei.data.repository.failureSummary
 import com.ljyh.mei.data.repository.playbackExceptionReason
 import com.ljyh.mei.data.repository.playbackExceptionType
 import com.ljyh.mei.utils.log.logPlaybackHistory
@@ -23,6 +22,7 @@ class PlaybackHistoryReporter(
         val mediaId: String,
         val songId: Long,
         val source: PlaybackHistorySource,
+        val startedAtMs: Long,
     )
 
     private val reporterJob = SupervisorJob()
@@ -36,43 +36,49 @@ class PlaybackHistoryReporter(
         mediaId: String,
         songId: Long,
         source: PlaybackHistorySource,
+        startedAtMs: Long,
     ) {
         if (songId <= 0L || source.sourceId <= 0L) return
         synchronized(lock) {
             if (closed || activePlayback?.mediaId == mediaId) return
-            activePlayback = ActivePlayback(mediaId, songId, source)
-            enqueueLocked("startplay->play") {
+            activePlayback = ActivePlayback(mediaId, songId, source, startedAtMs)
+            enqueueLocked("startplay") {
                 val result = repository.recordPlaybackStart(
                     songId = songId,
                     sourceId = source.sourceId,
                     source = source.source,
+                    startedAtMs = startedAtMs,
                 )
-                if (result?.accepted == true) {
+                if (result?.businessAccepted == true) {
                     logPlaybackHistory(Log.INFO, "Playback history start accepted")
                 } else {
                     logPlaybackHistory(
                         Log.WARN,
                         "Playback history start was not accepted: %s",
-                        result?.failureSummary()
-                            ?: "startplay={not attempted} play={not attempted}",
+                        result?.diagnosticSummary() ?: "not attempted",
                     )
                 }
             }
         }
     }
 
-    internal fun recordDuration(mediaId: String, playedDurationMs: Long) {
+    internal fun recordDuration(completed: CompletedPlaybackHistorySession, endedAtMs: Long) {
         synchronized(lock) {
             if (closed) return
-            val playback = activePlayback?.takeIf { it.mediaId == mediaId } ?: return
+            val playback = activePlayback?.takeIf {
+                it.mediaId == completed.mediaId && it.startedAtMs == completed.startedAtMs
+            } ?: return
             activePlayback = null
-            val timeSeconds = playedDurationMs.coerceAtLeast(0L) / 1_000L
+            val timeSeconds = completed.playedDurationMs.coerceAtLeast(0L) / 1_000L
             enqueueLocked("play duration") {
                 val result = repository.recordPlaybackDuration(
                     songId = playback.songId,
                     sourceId = playback.source.sourceId,
                     source = playback.source.source,
                     timeSeconds = timeSeconds,
+                    startedAtMs = completed.startedAtMs,
+                    endedAtMs = endedAtMs,
+                    endReason = completed.endReason,
                 )
                 if (result?.businessAccepted == true) {
                     logPlaybackHistory(

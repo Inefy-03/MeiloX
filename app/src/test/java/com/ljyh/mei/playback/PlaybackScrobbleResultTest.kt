@@ -1,9 +1,8 @@
 package com.ljyh.mei.playback
 
 import com.ljyh.mei.data.repository.PlaybackLogResponse
-import com.ljyh.mei.data.repository.PlaybackScrobbleResult
 import com.ljyh.mei.data.repository.PLAYBACK_HISTORY_DIAGNOSTIC_ENDPOINT
-import com.ljyh.mei.data.repository.failureSummary
+import com.ljyh.mei.data.repository.diagnosticSummary
 import com.ljyh.mei.data.repository.parsePlaybackHistoryBody
 import com.ljyh.mei.data.repository.sanitizePlaybackDiagnosticText
 import com.ljyh.mei.di.MAX_PLAYBACK_HISTORY_RESPONSE_BYTES
@@ -15,10 +14,10 @@ import org.junit.Test
 
 class PlaybackScrobbleResultTest {
     @Test
-    fun bothBusinessResponsesAreRequiredForAcceptance() {
-        assertTrue(PlaybackScrobbleResult(response(200), response(200)).accepted)
-        assertFalse(PlaybackScrobbleResult(response(500), response(200)).accepted)
-        assertFalse(PlaybackScrobbleResult(response(200), response(500)).accepted)
+    fun httpAndBusinessSuccessAreRequiredForAcceptance() {
+        assertTrue(response(200).businessAccepted)
+        assertFalse(response(500).businessAccepted)
+        assertFalse(response(200, httpAccepted = false).businessAccepted)
     }
 
     @Test
@@ -37,7 +36,7 @@ class PlaybackScrobbleResultTest {
     }
 
     @Test
-    fun networkFailureSummaryContainsBothActionsAndRedactsSecrets() {
+    fun networkFailureSummaryRedactsSecrets() {
         val response = response(
             httpAccepted = false,
             exceptionType = "ConnectException",
@@ -45,10 +44,8 @@ class PlaybackScrobbleResultTest {
                 "Failed to connect to clientlog.music.163.com/0.0.0.0:443?MUSIC_U=secret-cookie",
         )
 
-        val summary = PlaybackScrobbleResult(response, response).failureSummary()
+        val summary = response.diagnosticSummary()
 
-        assertTrue(summary.contains("startplay"))
-        assertTrue(summary.contains("play"))
         assertTrue(summary.contains("endpoint=$PLAYBACK_HISTORY_DIAGNOSTIC_ENDPOINT"))
         assertTrue(summary.contains("ConnectException"))
         assertTrue(summary.contains("0.0.0.0:443"))

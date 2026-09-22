@@ -13,6 +13,67 @@ import org.junit.Test
 
 class PlaybackHistorySessionTest {
     @Test
+    fun playbackAcrossMidnightKeepsOriginalStartAndExcludesPausedTime() {
+        val session = PlaybackHistorySession()
+        val midnight = 1_790_006_400_000L
+        val startedAt = midnight - 20_000L
+        assertEquals(startedAt, session.update("123", true, startedAt, 1_000L).startedAtMs)
+        session.update("123", false, midnight - 10_000L, 11_000L)
+        assertNull(session.update("123", true, midnight + 10_000L, 31_000L).startedAtMs)
+
+        val completed = session.finish(61_000L, "playend")!!
+
+        assertEquals(startedAt, completed.startedAtMs)
+        assertEquals(40_000L, completed.playedDurationMs)
+        assertEquals("playend", completed.endReason)
+        assertNull(session.finish(62_000L))
+    }
+
+    @Test
+    fun replayingSameSongNextDayUsesANewStartTimestamp() {
+        val session = PlaybackHistorySession()
+        val firstStart = 1_790_006_390_000L
+        val nextDay = firstStart + 86_400_000L
+        session.update("123", true, firstStart, 1_000L)
+        val first = session.finish(61_000L, "playend")!!
+        session.update("123", true, nextDay, 86_401_000L)
+        val second = session.finish(86_521_000L, "playend")!!
+
+        assertEquals(firstStart, first.startedAtMs)
+        assertEquals(nextDay, second.startedAtMs)
+        assertEquals(60_000L, first.playedDurationMs)
+        assertEquals(120_000L, second.playedDurationMs)
+    }
+
+    @Test
+    fun transitionReportsNaturalCompletionOnlyForAutoAndRepeat() {
+        mapOf(
+            Player.MEDIA_ITEM_TRANSITION_REASON_AUTO to "playend",
+            Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT to "playend",
+            Player.MEDIA_ITEM_TRANSITION_REASON_SEEK to "ui",
+            Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED to "interrupt",
+        ).forEach { (reason, endReason) ->
+            val session = PlaybackHistorySession()
+            session.update("123", true, 1_790_006_390_000L, 1_000L)
+            val completed = session.onMediaItemTransition("456", reason, 31_000L)!!
+            assertEquals(endReason, completed.endReason)
+            assertEquals(30_000L, completed.playedDurationMs)
+            assertEquals(1_790_006_390_000L, completed.startedAtMs)
+        }
+    }
+
+    @Test
+    fun wallClockChangesDoNotChangeOriginalStartOrListeningDuration() {
+        val session = PlaybackHistorySession()
+        session.update("123", true, 1_790_006_390_000L, 1_000L)
+        session.update("123", true, 1_789_006_390_000L, 31_000L)
+        val completed = session.finish(61_000L)!!
+        assertEquals(1_790_006_390_000L, completed.startedAtMs)
+        assertEquals(60_000L, completed.playedDurationMs)
+        assertEquals("interrupt", completed.endReason)
+    }
+
+    @Test
     fun preparedAndPausedItemsDoNotStartUntilActuallyPlaying() {
         val session = PlaybackHistorySession()
 

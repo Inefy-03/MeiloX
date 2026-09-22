@@ -549,7 +549,12 @@ class MusicService : MediaLibraryService(),
 
     override fun onPlaybackStateChanged(playbackState: Int) {
         if (playbackState == Player.STATE_IDLE || playbackState == Player.STATE_ENDED) {
-            recordPlaybackDuration(playbackHistorySession.finish(SystemClock.elapsedRealtime()))
+            recordPlaybackDuration(
+                playbackHistorySession.finish(
+                    SystemClock.elapsedRealtime(),
+                    endReason = if (playbackState == Player.STATE_ENDED) "playend" else "interrupt",
+                ),
+            )
         }
     }
 
@@ -659,14 +664,14 @@ class MusicService : MediaLibraryService(),
 
         val songId = mediaItem.playbackHistorySongIdOrNull() ?: return
         val source = resolvePlaybackHistorySource(songId) ?: return
-        playbackHistoryReporter.recordStart(mediaItem.mediaId, songId, source)
+        playbackHistoryReporter.recordStart(mediaItem.mediaId, songId, source, startedAtMs)
     }
 
     private fun recordPlaybackDuration(completed: CompletedPlaybackHistorySession?) {
         completed ?: return
         playbackHistoryReporter.recordDuration(
-            mediaId = completed.mediaId,
-            playedDurationMs = completed.playedDurationMs,
+            completed = completed,
+            endedAtMs = System.currentTimeMillis(),
         )
     }
 

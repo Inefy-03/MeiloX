@@ -39,10 +39,9 @@ import java.util.concurrent.TimeUnit
 
 class PlaybackHistoryTransportTest {
     @Test
-    fun playbackStartUsesRelativeRouteAndWaitsForStartplayBeforePlay() = runBlocking {
+    fun playbackStartSendsOnlyStartplayWithoutAZeroDurationCompletion() = runBlocking {
         val transport = MemoryTransport(
             outcomes = listOf(
-                TransportOutcome.Reply(200, "{\"code\":200}"),
                 TransportOutcome.Reply(200, "{\"code\":200}"),
             ),
             blockFirstResponse = true,
@@ -55,6 +54,7 @@ class PlaybackHistoryTransportTest {
                 songId = 123456L,
                 sourceId = 0L,
                 source = "unknown-source",
+                startedAtMs = 1_790_006_390_000L,
             ) { action, payload ->
                 synchronized(actions) {
                     actions += action
@@ -88,22 +88,16 @@ class PlaybackHistoryTransportTest {
         transport.releaseFirstResponse()
         val result = job.await()
 
-        assertTrue(result.accepted)
-        assertEquals(2, transport.requests.size)
+        assertTrue(result.businessAccepted)
+        assertEquals(1, transport.requests.size)
         synchronized(actions) {
-            assertEquals(listOf("startplay", "play"), actions)
-            assertEquals(2, fields.size)
+            assertEquals(listOf("startplay"), actions)
         }
-        val playPayload = playbackPayload(transport.requests[1])
-        assertEquals("play", playPayload["action"].asString)
-        val playFields = playPayload["json"].asJsonObject
-        assertEquals("123456", playFields["id"].asString)
-        assertEquals("123456", playFields["sourceId"].asString)
-        assertEquals("track", playFields["source"].asString)
-        assertEquals("0", playFields["time"].asString)
-        assertEquals("id=123456", playFields["content"].asString)
-        assertEquals("/api/feedback/weblog", transport.requests[0].url.encodedPath)
-        assertEquals("/api/feedback/weblog", transport.requests[1].url.encodedPath)
+        assertEquals(1_790_006_390_000L, firstFields["startlogtime"].asLong)
+        assertEquals(1_790_006_390_000L, firstFields["logtime"].asLong)
+        assertFalse(firstFields.has("end"))
+        assertFalse(firstFields.has("time"))
+        assertEquals("/api/feedback/weblog", transport.requests.single().url.encodedPath)
     }
 
     @Test
@@ -116,6 +110,9 @@ class PlaybackHistoryTransportTest {
             sourceId = 789L,
             source = "album",
             timeSeconds = 37L,
+            startedAtMs = 1_790_006_390_000L,
+            endedAtMs = 1_790_006_427_000L,
+            endReason = "playend",
         )
 
         val response = submitPlaybackHistoryLog(
@@ -128,7 +125,13 @@ class PlaybackHistoryTransportTest {
         assertEquals(1, transport.requests.size)
         val payload = playbackPayload(transport.requests.single())
         assertEquals("play", payload["action"].asString)
-        assertEquals("37", payload["json"].asJsonObject["time"].asString)
+        val json = payload["json"].asJsonObject
+        assertEquals(37L, json["time"].asLong)
+        assertTrue(json["time"].asJsonPrimitive.isNumber)
+        assertEquals(1_790_006_390_000L, json["startlogtime"].asLong)
+        assertEquals(1_790_006_427_000L, json["logtime"].asLong)
+        assertTrue(json["startlogtime"].asJsonPrimitive.isNumber)
+        assertTrue(json["logtime"].asJsonPrimitive.isNumber)
         assertEquals("playend", payload["json"].asJsonObject["end"].asString)
         assertEquals("/api/feedback/weblog", transport.requests.single().url.encodedPath)
     }
@@ -256,38 +259,23 @@ class PlaybackHistoryTransportTest {
     }
 
     @Test
-    fun startOrPlayBusinessFailureMakesWholeScrobbleFalse() = runBlocking {
-        val startFailureTransport = MemoryTransport(
-            outcomes = listOf(
-                TransportOutcome.Reply(200, "{\"code\":500}"),
-                TransportOutcome.Reply(200, "{\"code\":200}"),
-            ),
+    fun startBusinessFailureIsReturnedWithoutSubmittingACompletion() = runBlocking {
+        val transport = MemoryTransport(
+            outcomes = listOf(TransportOutcome.Reply(200, "{\"code\":500}")),
         )
-        val startFailure = submitPlaybackStart(serviceWith(startFailureTransport))
-        assertFalse(startFailure.start.businessAccepted)
-        assertTrue(startFailure.play.businessAccepted)
-        assertFalse(startFailure.accepted)
-
-        val playFailureTransport = MemoryTransport(
-            outcomes = listOf(
-                TransportOutcome.Reply(200, "{\"code\":200}"),
-                TransportOutcome.Reply(200, "{\"code\":500}"),
-            ),
-        )
-        val playFailure = submitPlaybackStart(serviceWith(playFailureTransport))
-        assertTrue(playFailure.start.businessAccepted)
-        assertFalse(playFailure.play.businessAccepted)
-        assertFalse(playFailure.accepted)
-    }
-
-    private suspend fun submitPlaybackStart(service: MeloXDirectService) =
-        submitPlaybackHistoryStart(
+        val response = submitPlaybackHistoryStart(
             songId = 123456L,
             sourceId = 789L,
             source = "album",
+            startedAtMs = 1_790_006_390_000L,
         ) { action, fields ->
-            submitPlaybackHistoryLog(service, action, fields)
+            submitPlaybackHistoryLog(serviceWith(transport), action, fields)
         }
+        assertFalse(response.businessAccepted)
+        assertEquals(500, response.code)
+        assertEquals(1, transport.requests.size)
+        assertEquals("startplay", playbackPayload(transport.requests.single())["action"].asString)
+    }
 
     private fun serviceWith(transport: MemoryTransport): MeloXDirectService =
         Retrofit.Builder()

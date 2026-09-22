@@ -95,14 +95,6 @@ data class PlaybackLogResponse(
         get() = httpAccepted && code?.let { it in 200..299 } == true
 }
 
-data class PlaybackScrobbleResult(
-    val start: PlaybackLogResponse,
-    val play: PlaybackLogResponse,
-) {
-    val accepted: Boolean
-        get() = start.businessAccepted && play.businessAccepted
-}
-
 @Singleton
 class MeloXRepository @Inject constructor(
     @Named("MeloXEapi") private val eapi: MeloXDirectService,
@@ -258,7 +250,8 @@ class MeloXRepository @Inject constructor(
         songId: Long,
         sourceId: Long,
         source: String,
-    ): PlaybackScrobbleResult? {
+        startedAtMs: Long,
+    ): PlaybackLogResponse? {
         if (songId <= 0L) return null
         val debugEnabled = authenticatedPlaybackHistoryDebugEnabled() ?: return null
 
@@ -266,6 +259,7 @@ class MeloXRepository @Inject constructor(
             songId = songId,
             sourceId = sourceId,
             source = source,
+            startedAtMs = startedAtMs,
         ) { action, fields ->
             submitPlaybackHistoryLog(eapi, action, fields).also { response ->
                 logPlaybackHistoryDebug(action, fields, response, debugEnabled)
@@ -278,6 +272,9 @@ class MeloXRepository @Inject constructor(
         sourceId: Long,
         source: String,
         timeSeconds: Long,
+        startedAtMs: Long,
+        endedAtMs: Long,
+        endReason: String,
     ): PlaybackLogResponse? {
         if (songId <= 0L) return null
         val debugEnabled = authenticatedPlaybackHistoryDebugEnabled() ?: return null
@@ -286,6 +283,9 @@ class MeloXRepository @Inject constructor(
             sourceId = sourceId,
             source = source,
             timeSeconds = timeSeconds,
+            startedAtMs = startedAtMs,
+            endedAtMs = endedAtMs,
+            endReason = endReason,
         )
         return submitPlaybackHistoryLog(eapi, "play", fields).also { response ->
             logPlaybackHistoryDebug("play", fields, response, debugEnabled)
@@ -309,13 +309,16 @@ class MeloXRepository @Inject constructor(
             logPlaybackHistory(
                 Log.DEBUG,
                 "PlaybackHistory action=%s params=id:%s sourceId:%s source:%s " +
-                    "sourcetype:%s time:%s result=%s",
+                    "sourcetype:%s time:%s startlogtime:%s logtime:%s end:%s result=%s",
                 action,
                 fields["id"],
                 fields["sourceId"],
                 fields["source"],
                 fields["sourcetype"],
                 fields["time"],
+                fields["startlogtime"],
+                fields["logtime"],
+                fields["end"],
                 response.diagnosticSummary(),
             )
         } catch (error: CancellationException) {
@@ -939,18 +942,15 @@ internal suspend fun submitPlaybackHistoryStart(
     songId: Long,
     sourceId: Long,
     source: String,
+    startedAtMs: Long,
     submit: suspend (String, Map<String, Any>) -> PlaybackLogResponse,
-): PlaybackScrobbleResult {
+): PlaybackLogResponse {
     require(songId > 0L) { "songId must be positive" }
-    val startResponse = submit(
+    // A play event closes a session; sending play(time=0) here creates a false completion.
+    return submit(
         "startplay",
-        playbackHistoryBaseFields(songId, sourceId, source),
+        playbackHistoryBaseFields(songId, sourceId, source, startedAtMs, startedAtMs),
     )
-    val playResponse = submit(
-        "play",
-        playbackHistoryPlayFields(songId, sourceId, source, timeSeconds = 0L),
-    )
-    return PlaybackScrobbleResult(startResponse, playResponse)
 }
 
 internal fun playbackHistoryPlayFields(
@@ -958,10 +958,13 @@ internal fun playbackHistoryPlayFields(
     sourceId: Long,
     source: String,
     timeSeconds: Long,
-): Map<String, Any> = playbackHistoryBaseFields(songId, sourceId, source) + mapOf(
+    startedAtMs: Long,
+    endedAtMs: Long,
+    endReason: String,
+): Map<String, Any> = playbackHistoryBaseFields(songId, sourceId, source, startedAtMs, endedAtMs) + mapOf(
     "download" to 0,
-    "end" to "playend",
-    "time" to timeSeconds.coerceAtLeast(0L).toString(),
+    "end" to endReason,
+    "time" to timeSeconds.coerceAtLeast(0L),
     "wifi" to 0,
 )
 
@@ -969,6 +972,8 @@ private fun playbackHistoryBaseFields(
     songId: Long,
     sourceId: Long,
     source: String,
+    startedAtMs: Long,
+    loggedAtMs: Long,
 ): Map<String, Any> {
     require(songId > 0L) { "songId must be positive" }
     val knownSource = source.takeIf { it in PLAYBACK_SOURCES }
@@ -978,6 +983,10 @@ private fun playbackHistoryBaseFields(
     return mapOf(
         "id" to songId.toString(),
         "type" to "song",
+        // The official player pairs start/end logs with the original epoch-millisecond start.
+        // Capture event times before enqueueing so a delayed upload keeps its playback date.
+        "startlogtime" to startedAtMs,
+        "logtime" to loggedAtMs,
         "sourceId" to safeSourceId.toString(),
         "source" to safeSource,
         "sourcetype" to safeSource,
@@ -1100,9 +1109,6 @@ internal fun PlaybackLogResponse.diagnosticSummary(): String = buildString {
         sanitizePlaybackDiagnosticText(endpoint)?.let { append(" endpoint=").append(it) }
     }
 }
-
-internal fun PlaybackScrobbleResult.failureSummary(): String =
-    "startplay={${start.diagnosticSummary()}} play={${play.diagnosticSummary()}}"
 
 internal fun sanitizePlaybackDiagnosticText(value: String?): String? {
     if (value.isNullOrBlank()) return null
