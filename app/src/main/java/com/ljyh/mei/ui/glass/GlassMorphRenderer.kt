@@ -27,7 +27,6 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.layer.GraphicsLayer
@@ -46,19 +45,22 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.ceil
 import com.kyant.backdrop.Backdrop
 
-private const val GlassRenderScale = 0.5f
+// These passes only carry an already blurred backdrop. Keep the moving outline, tint,
+// highlight and foreground at native resolution while reducing filter fill and bandwidth.
+private const val DefaultGlassRenderScale = 0.5f
 
 @Composable
 internal fun rememberGlassMorphRenderer(
     backdrop: Backdrop,
     active: Boolean,
     blurRadius: Dp = 2.dp,
+    renderScale: Float = DefaultGlassRenderScale,
 ): GlassMorphRenderer {
     val density = LocalDensity.current
     val source = rememberGraphicsLayer()
     val refracted = rememberGraphicsLayer()
-    val renderer = remember(backdrop, density, blurRadius, source, refracted) {
-        GlassMorphRenderer(backdrop, density, blurRadius, source, refracted)
+    val renderer = remember(backdrop, density, blurRadius, renderScale, source, refracted) {
+        GlassMorphRenderer(backdrop, density, blurRadius, renderScale, source, refracted)
     }
     DisposableEffect(renderer, active) {
         // Keep shaders/layers across endpoints, but never reuse an old capture when a new
@@ -74,6 +76,7 @@ internal class GlassMorphRenderer(
     private val backdrop: Backdrop,
     private val density: Density,
     blurRadius: Dp,
+    private val renderScale: Float,
     private val source: GraphicsLayer,
     private val refracted: GraphicsLayer,
 ) {
@@ -85,7 +88,7 @@ internal class GlassMorphRenderer(
         val color = RenderEffect.createColorFilterEffect(
             ColorMatrixColorFilter(ColorMatrix().apply { setSaturation(1.5f) }),
         )
-        val blur = with(density) { blurRadius.toPx() } * GlassRenderScale
+        val blur = with(density) { blurRadius.toPx() } * renderScale
         RenderEffect.createBlurEffect(blur, blur, color, Shader.TileMode.CLAMP)
             .asComposeRenderEffect()
     }
@@ -123,14 +126,18 @@ internal class GlassMorphRenderer(
         val sourceOffset = origin - viewport.topLeft
         if (recordedViewport != viewport) {
             val bufferSize = IntSize(
-                ceil(viewport.width * GlassRenderScale).toInt(),
-                ceil(viewport.height * GlassRenderScale).toInt(),
+                ceil(viewport.width * renderScale).toInt(),
+                ceil(viewport.height * renderScale).toInt(),
             )
+            // The source display list contains the entire page. Its logical size alone
+            // does not clip that list: bound both offscreen passes to the capture band.
+            source.clip = true
+            refracted.clip = true
             source.renderEffect = sourceEffect
             val root = coordinates.findRootCoordinates()
             source.record(bufferSize) {
                 withTransform({
-                    scale(GlassRenderScale, GlassRenderScale, Offset.Zero)
+                    scale(renderScale, renderScale, Offset.Zero)
                     translate(-viewport.left, -viewport.top)
                 }) {
                     // CanvasBackdrop also reads DrawScope.size. Record in root coordinates
@@ -138,7 +145,11 @@ internal class GlassMorphRenderer(
                     val previousSize = drawContext.size
                     drawContext.size = Size(root.size.width.toFloat(), root.size.height.toFloat())
                     try {
-                        with(backdrop) { drawBackdrop(this@GlassMorphRenderer.density, root, null) }
+                        if (backdrop is ViewportBackdrop) {
+                            with(backdrop) { drawViewport(this@GlassMorphRenderer.density, root, viewport) }
+                        } else {
+                            with(backdrop) { drawBackdrop(this@GlassMorphRenderer.density, root, null) }
+                        }
                     } finally {
                         drawContext.size = previousSize
                     }
@@ -153,11 +164,11 @@ internal class GlassMorphRenderer(
             sourceOffset.x + bounds.right * sampleScale.x,
             sourceOffset.y + bounds.bottom * sampleScale.y,
         )
-        shader.setFloatUniform("center", sampleBounds.center.x * GlassRenderScale, sampleBounds.center.y * GlassRenderScale)
-        shader.setFloatUniform("halfSize", sampleBounds.width * GlassRenderScale / 2f, sampleBounds.height * GlassRenderScale / 2f)
-        shader.setFloatUniform("radius", radius * minOf(sampleScale.x, sampleScale.y) * GlassRenderScale)
-        shader.setFloatUniform("height", refractionHeight.toPx() * GlassRenderScale)
-        shader.setFloatUniform("amount", -refractionAmount.toPx() * GlassRenderScale)
+        shader.setFloatUniform("center", sampleBounds.center.x * renderScale, sampleBounds.center.y * renderScale)
+        shader.setFloatUniform("halfSize", sampleBounds.width * renderScale / 2f, sampleBounds.height * renderScale / 2f)
+        shader.setFloatUniform("radius", radius * minOf(sampleScale.x, sampleScale.y) * renderScale)
+        shader.setFloatUniform("height", refractionHeight.toPx() * renderScale)
+        shader.setFloatUniform("amount", -refractionAmount.toPx() * renderScale)
         refracted.renderEffect = RenderEffect.createRuntimeShaderEffect(shader, "content")
             .asComposeRenderEffect()
 
@@ -170,17 +181,17 @@ internal class GlassMorphRenderer(
             }
             drawPath(path, Color(0xFF6E6E6E).copy(alpha = GlassBoxShadowAlpha), style = Stroke(0.65.dp.toPx()))
         }
-        clipPath(path) {
+        highlight.setFloatUniform("center", bounds.center.x, bounds.center.y)
+        highlight.setFloatUniform("halfSize", bounds.width / 2f, bounds.height / 2f)
+        highlight.setFloatUniform("radius", radius)
+        highlight.setFloatUniform("opacity", highlightAlpha)
+        clipGlassShape(bounds, radius, shape, path) {
             withTransform({
                 scale(1f / sampleScale.x, 1f / sampleScale.y, Offset.Zero)
                 translate(-sourceOffset.x, -sourceOffset.y)
-                scale(1f / GlassRenderScale, 1f / GlassRenderScale, Offset.Zero)
+                scale(1f / renderScale, 1f / renderScale, Offset.Zero)
             }) { drawLayer(refracted) }
             drawRect(tint.copy(alpha = (tint.alpha * tintMultiplier).coerceIn(0f, 1f)))
-            highlight.setFloatUniform("center", bounds.center.x, bounds.center.y)
-            highlight.setFloatUniform("halfSize", bounds.width / 2f, bounds.height / 2f)
-            highlight.setFloatUniform("radius", radius)
-            highlight.setFloatUniform("opacity", highlightAlpha)
             drawPath(
                 path,
                 highlightBrush,

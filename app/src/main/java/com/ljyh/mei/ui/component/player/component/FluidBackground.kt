@@ -63,13 +63,18 @@ fun FluidBackground(
     val expanded by remember(sheet) {
         derivedStateOf { sheet == null || sheet.state.isExpanded }
     }
+    val sheetVisible by remember(sheet) {
+        derivedStateOf {
+            sheet == null || sheet.state.isExpanded || sheet.state.isTransitioning
+        }
+    }
     var meshView by remember { mutableStateOf<MeshBackgroundView?>(null) }
     var surfaceReady by remember { mutableStateOf(false) }
     val backgroundVisible = alpha > 0.01f
     val backgroundOpacity = alpha.coerceIn(0f, 1f)
-    // This composable is mounted only while the sheet is visible. Start the real Surface
-    // immediately so it can render before the opening fade becomes noticeable.
-    val backgroundActive = lifecycleStarted && backgroundVisible
+    // Keep EGL and the album texture across openings without rendering hidden frames.
+    // Start immediately on a new gesture, before the opening fade becomes noticeable.
+    val backgroundActive = lifecycleStarted && backgroundVisible && sheetVisible
     val audioReactive = backgroundActive && expanded
     val bass by produceState(0f, audioVisualizerManager, audioReactive) {
         value = 0f
@@ -130,6 +135,7 @@ fun FluidBackground(
     val pixelCopyHandler = remember { Handler(Looper.getMainLooper()) }
     val captureBuffers = remember { arrayOfNulls<Bitmap>(3) }
     val captureState = remember { IntArray(3) }
+    val capturedFrameVersion = remember { longArrayOf(-1L) }
 
     // Configuration changes are infrequent compared with sheet/bass recompositions. Apply
     // renderer settings from their state boundary instead of queueing GL work from every
@@ -166,7 +172,10 @@ fun FluidBackground(
         while (isActive && (continuous || attempts < StaticBackdropCaptureAttempts)) {
             val sourceWidth = view.width
             val sourceHeight = view.height
-            if (view.hasRenderedAlbum && view.isAttachedToWindow && sourceWidth > 0 && sourceHeight > 0) {
+            val frameVersion = view.renderedFrameVersion
+            if (view.hasRenderedAlbum && view.isAttachedToWindow && sourceWidth > 0 && sourceHeight > 0 &&
+                frameVersion != capturedFrameVersion[0]
+            ) {
                 val shortSide = minOf(sourceWidth, sourceHeight).toFloat()
                 val longSide = maxOf(sourceWidth, sourceHeight).toFloat()
                 val scale = minOf(
@@ -194,7 +203,11 @@ fun FluidBackground(
                 if (copySurfaceFrame(view, bitmap, pixelCopyHandler)) {
                     if (!isActive) return@LaunchedEffect
                     target.value = bitmap.asImageBitmap()
+                    capturedFrameVersion[0] = frameVersion
                 }
+            }
+            // Do not exhaust static capture attempts before the first album reaches GL.
+            if (view.hasRenderedAlbum && view.isAttachedToWindow && sourceWidth > 0 && sourceHeight > 0) {
                 attempts++
             }
             delay(BackdropCaptureIntervalMillis)

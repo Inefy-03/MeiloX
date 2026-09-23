@@ -69,6 +69,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -179,7 +180,7 @@ import com.ljyh.mei.ui.glass.LocalBlurBackdrop
 import com.ljyh.mei.ui.glass.defaultGlassColors
 import com.ljyh.mei.ui.glass.SfIcon
 import com.ljyh.mei.ui.glass.SfSymbol
-import com.ljyh.mei.ui.glass.rememberCrossWindowBackdrop
+import com.ljyh.mei.ui.glass.rememberSharedGlassBackdrop
 import com.ljyh.mei.ui.glass.trackBackdropPosition
 import com.ljyh.mei.ui.screen.Index
 import com.ljyh.mei.ui.screen.Screen
@@ -201,7 +202,6 @@ import com.ljyh.mei.utils.VersionUpdateChecker
 import com.ljyh.mei.utils.VersionUpdateResult
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.Backdrop
-import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberCanvasBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import dagger.hilt.android.AndroidEntryPoint
@@ -463,10 +463,7 @@ class MainActivity : ComponentActivity() {
                 // Popups are hosted in a separate Android window. Wrap the recorded page layer
                 // before combining it so its sample coordinates use the popup's real screen
                 // position rather than the popup-local overshoot origin.
-                val bottomControlsBackdrop = rememberCombinedBackdrop(
-                    glassBackdrop,
-                    rememberCrossWindowBackdrop(bottomBackdrop),
-                )
+                val bottomControlsBackdrop = rememberSharedGlassBackdrop(glassBackdrop, bottomBackdrop)
                 CompositionLocalProvider(
                     LocalGlassBackdrop provides glassBackdrop,
                     LocalGlassColors provides glassColors,
@@ -607,8 +604,15 @@ class MainActivity : ComponentActivity() {
                     val windowInsetsController = remember {
                         WindowInsetsControllerCompat(window, window.decorView)
                     }
-                    val isPlayerPage = playerBottomSheetState.isExpanded ||
-                        playerBottomSheetState.progress >= 0.99f
+                    val isPlayerPage = remember(playerBottomSheetState) {
+                        derivedStateOf {
+                            playerBottomSheetState.isExpanded ||
+                                playerBottomSheetState.progress >= 0.99f
+                        }
+                    }.value
+                    val playerDismissed by remember(playerBottomSheetState) {
+                        derivedStateOf { playerBottomSheetState.isDismissed }
+                    }
                     SideEffect {
                         val transparent = android.graphics.Color.TRANSPARENT
                         enableEdgeToEdge(
@@ -739,6 +743,7 @@ class MainActivity : ComponentActivity() {
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
+                                    .graphicsLayer()
                                     .layerBackdrop(bottomBackdrop)
                                     .trackBackdropPosition(bottomBackdrop),
                             ) {
@@ -758,6 +763,9 @@ class MainActivity : ComponentActivity() {
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
+                                    // Keep sibling player/nav draw invalidations from recording
+                                    // the unchanged page again. Child updates remain live.
+                                    .graphicsLayer()
                                     .layerBackdrop(bottomBackdrop)
                                     .trackBackdropPosition(bottomBackdrop),
                             ) {
@@ -862,14 +870,14 @@ class MainActivity : ComponentActivity() {
                                                     bottomInset,
                                                     navigationItems,
                                                     navigationBarVisible,
-                                                    playerBottomSheetState.isDismissed,
+                                                    playerDismissed,
                                                     windowsInsets,
                                                 ) {
                                                     playerAwareWindowInsetsForRoute(
                                                         route = meiRoute.route,
                                                         navigationItems = navigationItems,
                                                         navigationBarVisible = navigationBarVisible,
-                                                        playerDismissed = playerBottomSheetState.isDismissed,
+                                                        playerDismissed = playerDismissed,
                                                         windowsInsets = windowsInsets,
                                                         bottomInset = bottomInset,
                                                     )
@@ -1140,7 +1148,6 @@ private fun AnimatedBottomNavigationRow(
     playerBottomSheetState: BottomSheetState,
     bottomInset: Dp,
 ) {
-    val progress = compactProgress.value
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1159,7 +1166,7 @@ private fun AnimatedBottomNavigationRow(
             onExpand = onExpand,
             onSelected = onSelected,
             backdrop = backdrop,
-            compactProgress = progress,
+            compactProgress = compactProgress,
             compactSize = MiniPlayerHeight,
             modifier = Modifier.weight(1f),
         )
@@ -1168,23 +1175,33 @@ private fun AnimatedBottomNavigationRow(
             modifier = Modifier.size(64.dp),
             contentAlignment = Alignment.CenterEnd,
         ) {
-            GlassIconButton(
-                onClick = onSearchClick,
-                backdrop = backdrop,
-                style = GlassSurfaceStyle.Navigation,
-                modifier = Modifier.size(64.dp - 16.dp * progress),
-                morphProgress = compactProgress,
-                morphCaptureWidth = 64.dp,
-            ) {
-                SfIcon(
-                    SfSymbol.Search,
-                    contentDescription = stringResource(R.string.app_tab_search),
-                    tint = LocalGlassColors.current.content,
-                    size = 26.dp + (CompactBottomControlIconSize - 26.dp) * progress,
-                    weight = androidx.compose.ui.text.font.FontWeight.SemiBold,
-                )
-            }
+            AnimatedHomeSearchButton(compactProgress, backdrop, onSearchClick)
         }
+    }
+}
+
+@Composable
+private fun AnimatedHomeSearchButton(
+    compactProgress: State<Float>,
+    backdrop: Backdrop,
+    onClick: () -> Unit,
+) {
+    val progress = compactProgress.value
+    GlassIconButton(
+        onClick = onClick,
+        backdrop = backdrop,
+        style = GlassSurfaceStyle.Navigation,
+        modifier = Modifier.size(64.dp - 16.dp * progress),
+        morphProgress = compactProgress,
+        morphCaptureWidth = 64.dp,
+    ) {
+        SfIcon(
+            SfSymbol.Search,
+            contentDescription = stringResource(R.string.app_tab_search),
+            tint = LocalGlassColors.current.content,
+            size = 26.dp + (CompactBottomControlIconSize - 26.dp) * progress,
+            weight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+        )
     }
 }
 

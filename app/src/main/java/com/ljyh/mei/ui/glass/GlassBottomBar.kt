@@ -50,6 +50,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.constrainWidth
+import androidx.compose.ui.unit.constrainHeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.fastCoerceIn
@@ -138,14 +140,21 @@ fun <T> GlassBottomBar(
     selectedKey: T,
     onSelected: (T) -> Unit,
     onExpand: () -> Unit,
-    compactProgress: Float,
+    compactProgress: State<Float>,
     compactSize: Dp,
     modifier: Modifier = Modifier,
     backdrop: Backdrop = LocalGlassBackdrop.current,
 ) {
     require(items.isNotEmpty())
-    val compact = compactProgress.coerceIn(0f, 1f)
-    val morphing = compactProgress != 0f && compactProgress != 1f
+    val compactState = remember(compactProgress) {
+        derivedStateOf { compactProgress.value.coerceIn(0f, 1f) }
+    }
+    val morphing by remember(compactProgress) {
+        derivedStateOf { compactProgress.value != 0f && compactProgress.value != 1f }
+    }
+    val compactMode by remember(compactState) {
+        derivedStateOf { compactState.value >= CompactIndicatorFadeStart }
+    }
     val onSelectedState = rememberUpdatedState(onSelected)
     val stableOnSelected: (T) -> Unit = remember {
         { key -> onSelectedState.value(key) }
@@ -161,7 +170,6 @@ fun <T> GlassBottomBar(
     val indicatorBackdrop = rememberCombinedBackdrop(backdrop, tabsBackdrop)
     val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
     val animationScope = rememberCoroutineScope()
-    val compactState = rememberUpdatedState(compact)
     val onExpandState = rememberUpdatedState(onExpand)
     val selectedIndexState = rememberUpdatedState(selectedIndex)
 
@@ -169,26 +177,46 @@ fun <T> GlassBottomBar(
         val density = LocalDensity.current
         val fullWidthPx = constraints.maxWidth.toFloat()
         val compactWidthPx = with(density) { compactSize.toPx() }
-        val indicatorSettled = compact >= CompactIndicatorFadeEnd
-        val surfaceWidthPx = morphSurfaceWidthPx(fullWidthPx, compactWidthPx, compact)
-        val surfaceWidth = with(density) { surfaceWidthPx.toDp() }
-        val surfaceHeight = androidx.compose.ui.unit.lerp(64.dp, compactSize, compact)
+        val indicatorSettled by remember(compactState) {
+            derivedStateOf { compactState.value >= CompactIndicatorFadeEnd }
+        }
+        // Geometry changes belong to measurement. Do not rebuild the tab/source/effect
+        // compositions on every spring frame just to update their width and height.
+        val surfaceSizeModifier = remember(compactState, fullWidthPx, compactWidthPx, compactSize) {
+            Modifier.layout { measurable, constraints ->
+                val progress = compactState.value
+                val width = constraints.constrainWidth(
+                    morphSurfaceWidthPx(fullWidthPx, compactWidthPx, progress).roundToInt(),
+                )
+                val height = constraints.constrainHeight(
+                    androidx.compose.ui.unit.lerp(64.dp, compactSize, progress).roundToPx(),
+                )
+                val placeable = measurable.measure(androidx.compose.ui.unit.Constraints.fixed(width, height))
+                layout(width, height) { placeable.placeRelative(0, 0) }
+            }
+        }
         val paddingPx = with(density) { 4.dp.toPx() }
         val expandedTabWidthPx = ((fullWidthPx - paddingPx * 2f) / tabItems.size)
             .coerceAtLeast(1f)
         val compactInnerWidthPx = (compactWidthPx - paddingPx * 2f).coerceAtLeast(1f)
         val tabWidthPx = expandedTabWidthPx
-        val indicatorWidthPx = if (indicatorSettled) {
-            compactWidthPx
-        } else {
-            lerp(expandedTabWidthPx, compactInnerWidthPx, compact)
+        val innerGlassVisibilityState = remember(compactState) {
+            derivedStateOf { compactIndicatorVisibility(compactState.value) }
         }
-        val indicatorWidth = with(density) {
-            indicatorWidthPx.toDp()
+        val indicatorSizeModifier = remember(
+            compactState, expandedTabWidthPx, compactInnerWidthPx, compactWidthPx, compactSize,
+        ) {
+            Modifier.layout { measurable, constraints ->
+                val progress = compactState.value
+                val settled = progress >= CompactIndicatorFadeEnd
+                val width = constraints.constrainWidth((if (settled) compactWidthPx else
+                    lerp(expandedTabWidthPx, compactInnerWidthPx, progress)).roundToInt())
+                val height = constraints.constrainHeight((if (settled) compactSize else
+                    androidx.compose.ui.unit.lerp(56.dp, compactSize - 8.dp, progress)).roundToPx())
+                val placeable = measurable.measure(androidx.compose.ui.unit.Constraints.fixed(width, height))
+                layout(width, height) { placeable.placeRelative(0, 0) }
+            }
         }
-        val expandedIndicatorVisibility = (1f - compact * 1.5f).coerceIn(0f, 1f)
-        val innerGlassVisibility = compactIndicatorVisibility(compact)
-        val innerGlassVisibilityState = rememberUpdatedState(innerGlassVisibility)
         val offsetAnimation = remember { Animatable(0f) }
         var currentIndex by remember { mutableIntStateOf(selectedIndex) }
         val dragAnimation = remember(animationScope, tabItems.size) {
@@ -223,7 +251,7 @@ fun <T> GlassBottomBar(
                 },
             )
         }
-        LaunchedEffect(selectedIndex, compact >= 0.74f) {
+        LaunchedEffect(selectedIndex, compactMode) {
             currentIndex = selectedIndex
             dragAnimation.animateToValue(selectedIndex.toFloat())
         }
@@ -404,7 +432,9 @@ fun <T> GlassBottomBar(
                     onDrawSurface = { drawRect(containerColor) },
                 )
         }
-        val expandedIndicatorVisibilityState = rememberUpdatedState(expandedIndicatorVisibility)
+        val expandedIndicatorVisibilityState = remember(compactState) {
+            derivedStateOf { (1f - compactState.value * 1.5f).coerceIn(0f, 1f) }
+        }
         val indicatorPositionLayerBlock: GraphicsLayerScope.() -> Unit = remember(
             compactState,
             offsetAnimation,
@@ -472,7 +502,7 @@ fun <T> GlassBottomBar(
                 alpha = innerGlassVisibilityState.value
             }
         }
-        val indicatorBackdropModifier = if (compact < CompactIndicatorFadeEnd) {
+        val indicatorBackdropModifier = if (!indicatorSettled) {
             remember(
                 indicatorBackdrop,
                 dragAnimation,
@@ -549,12 +579,11 @@ fun <T> GlassBottomBar(
         CompositionLocalProvider(LocalLiquidTabScale provides visibleTabContentScale) {
             Row(
                 modifier = Modifier
-                    .width(surfaceWidth)
-                    .height(surfaceHeight)
+                    .then(surfaceSizeModifier)
                     .then(commonTransform)
                     .then(navigationGlassModifier)
                     .then(interactiveHighlight.modifier)
-                    .then(if (compact >= 0.74f) Modifier.clearAndSetSemantics {} else Modifier)
+                    .then(if (compactMode) Modifier.clearAndSetSemantics {} else Modifier)
                     .padding(4.dp)
                     .clip(Capsule()),
                 verticalAlignment = Alignment.CenterVertically,
@@ -569,7 +598,7 @@ fun <T> GlassBottomBar(
                             items = stableItems,
                             selectedKey = selectedItem.key,
                             onSelected = stableOnSelected,
-                            enabled = compact < 0.74f,
+                            enabled = !compactMode,
                             alpha = tabContentAlpha,
                             selectedColorFilter = selectedIconColorFilterState,
                             hideSelectedItem = true,
@@ -593,15 +622,14 @@ fun <T> GlassBottomBar(
             }
         }
 
-        if (compact < CompactIndicatorFadeEnd) {
+        if (!indicatorSettled) {
             CompositionLocalProvider(LocalLiquidTabScale provides lensSourceTabContentScale) {
                 Row(
                     modifier = Modifier
                         .clearAndSetSemantics {}
                         .alpha(0f)
                         .then(hiddenLayerBackdropModifier)
-                        .width(surfaceWidth)
-                        .height(surfaceHeight)
+                        .then(surfaceSizeModifier)
                         .then(commonTransform)
                         .then(hiddenBackdropModifier)
                         .then(interactiveHighlight.modifier)
@@ -624,7 +652,7 @@ fun <T> GlassBottomBar(
                                 // is visually hidden, but it sits above the visible row in the hit-test tree.
                                 // The source content is accent-filtered as one unit so every item
                                 // sampled through the Lens uses the same emphasis color.
-                                enabled = compact < 0.74f,
+                                enabled = !compactMode,
                                 alpha = tabContentAlpha,
                                 selectedColorFilter = selectedIconColorFilterState,
                                 hideSelectedItem = true,
@@ -655,16 +683,9 @@ fun <T> GlassBottomBar(
                 .then(interactiveHighlight.gestureModifier)
                 .then(dragAnimation.modifier)
                 .then(indicatorBackdropModifier)
-                .height(
-                    if (indicatorSettled) {
-                        compactSize
-                    } else {
-                        androidx.compose.ui.unit.lerp(56.dp, compactSize - 8.dp, compact)
-                    },
-                )
-                .width(indicatorWidth)
+                .then(indicatorSizeModifier)
                 .then(
-                    if (compact >= 0.74f) {
+                    if (compactMode) {
                         Modifier
                             .clickable(
                                 interactionSource = null,

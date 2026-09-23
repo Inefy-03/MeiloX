@@ -22,7 +22,9 @@ private const val TAG = "MeshGradientRenderer"
 
 class MeshGradientRenderer : GLSurfaceView.Renderer {
     private data class MeshState(
-        val mesh: BHPMesh,
+        val vertexBuffer: Int,
+        val indexBuffer: Int,
+        val indexCount: Int,
         val textureId: Int,
         var alpha: Float,
         var targetAlpha: Float
@@ -30,6 +32,7 @@ class MeshGradientRenderer : GLSurfaceView.Renderer {
 
     private var mainProgram: Int = 0
     private var quadProgram: Int = 0
+    private var quadVertexBuffer: Int = 0
 
     private var mainAPos = 0
     private var mainAColor = 0
@@ -82,9 +85,6 @@ class MeshGradientRenderer : GLSurfaceView.Renderer {
     var flowSpeed: Float = 0.25f
 
     @Volatile
-    var renderScale: Float = 0.75f
-
-    @Volatile
     var subdivision: Int = 50
 
     private var staticMode: Boolean = false
@@ -95,7 +95,14 @@ class MeshGradientRenderer : GLSurfaceView.Renderer {
         private set
 
     @Volatile
+    var renderedFrameVersion = 0L
+        private set
+
+    @Volatile
     var onSurfaceReadyChanged: ((Boolean) -> Unit)? = null
+
+    var onRenderDemandChanged: ((Boolean) -> Unit)? = null
+    private var continuousRenderingNeeded = true
 
     private var pendingAlbum: Bitmap? = null
     private var albumChanged: Boolean = false
@@ -134,6 +141,16 @@ class MeshGradientRenderer : GLSurfaceView.Renderer {
         quadProgram =
             createProgram(ShaderSource.QUAD_VERTEX_SHADER, ShaderSource.QUAD_FRAGMENT_SHADER)
         cacheShaderLocations()
+        val quadIds = IntArray(1)
+        GLES30.glGenBuffers(1, quadIds, 0)
+        quadVertexBuffer = quadIds[0]
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, quadVertexBuffer)
+        quadBuffer.position(0)
+        GLES30.glBufferData(
+            GLES30.GL_ARRAY_BUFFER, quadBuffer.capacity() * Float.SIZE_BYTES,
+            quadBuffer, GLES30.GL_STATIC_DRAW,
+        )
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
 
         synchronized(this) {
             // A recreated surface means every previous GL object is gone. Drop the stale
@@ -157,8 +174,11 @@ class MeshGradientRenderer : GLSurfaceView.Renderer {
     }
 
     fun rebuildFbo() {
-        scaledWidth = maxOf(1, (viewWidth * renderScale).toInt())
-        scaledHeight = maxOf(1, (viewHeight * renderScale).toInt())
+        isStatic = false
+        // Surface buffers already use the requested working resolution. Let SurfaceFlinger
+        // scale that buffer to the View, instead of upscaling it once more in this GL pass.
+        scaledWidth = maxOf(1, viewWidth)
+        scaledHeight = maxOf(1, viewHeight)
         createFbo(scaledWidth, scaledHeight)
     }
 
@@ -168,10 +188,14 @@ class MeshGradientRenderer : GLSurfaceView.Renderer {
         if (meshStates.isEmpty() || fbo == 0) {
             GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
             GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+            updateRenderDemand()
             return
         }
 
-        if (staticMode && isStatic) return
+        if (staticMode && isStatic) {
+            updateRenderDemand()
+            return
+        }
 
         val now = System.nanoTime()
         val playing = isPlaying
@@ -212,9 +236,22 @@ class MeshGradientRenderer : GLSurfaceView.Renderer {
         }
 
         GLES30.glDisable(GLES30.GL_BLEND)
+        renderedFrameVersion++
         if (!hasRenderedAlbum) {
             hasRenderedAlbum = true
             onSurfaceReadyChanged?.invoke(true)
+        }
+        updateRenderDemand()
+    }
+
+    private fun updateRenderDemand() {
+        // Pausing flow must not stop an album crossfade halfway through. Once both are
+        // settled, the existing Surface buffer is sufficient until a property changes.
+        val needed = meshStates.isNotEmpty() &&
+            ((!staticMode && isPlaying) || meshStates.any { it.targetAlpha != 0f })
+        if (needed != continuousRenderingNeeded) {
+            continuousRenderingNeeded = needed
+            onRenderDemandChanged?.invoke(needed)
         }
     }
 
@@ -244,7 +281,7 @@ class MeshGradientRenderer : GLSurfaceView.Renderer {
 
             isStatic = false
             // A new surface has no previous image to crossfade from.
-            val newState = MeshState(mesh, textureId, if (meshStates.isEmpty()) 1f else 0f, 1f)
+            val newState = uploadMesh(mesh, textureId, if (meshStates.isEmpty()) 1f else 0f)
             for (existing in meshStates) {
                 existing.targetAlpha = -1f
             }
@@ -274,7 +311,7 @@ class MeshGradientRenderer : GLSurfaceView.Renderer {
             }
 
             if (state.alpha <= 0f && state.targetAlpha < 0f) {
-                GLES30.glDeleteTextures(1, intArrayOf(state.textureId), 0)
+                deleteMesh(state)
                 iter.remove()
             }
         }
@@ -322,11 +359,36 @@ class MeshGradientRenderer : GLSurfaceView.Renderer {
         return texIds[0]
     }
 
-    private fun drawMesh(state: MeshState, time: Float) {
-        val mesh = state.mesh
-        val vertexBuffer = mesh.buffer ?: return
-        val indexBuffer = mesh.generateIndexBuffer()
+    private fun uploadMesh(mesh: BHPMesh, textureId: Int, alpha: Float): MeshState {
+        val vertices = checkNotNull(mesh.buffer)
+        val indices = mesh.generateIndexBuffer()
+        val buffers = IntArray(2)
+        GLES30.glGenBuffers(buffers.size, buffers, 0)
+        // Geometry is immutable for an album. Client arrays otherwise make the driver
+        // validate and upload the same vertices/indices on every animated frame.
+        vertices.position(0)
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, buffers[0])
+        GLES30.glBufferData(
+            GLES30.GL_ARRAY_BUFFER, vertices.capacity() * Float.SIZE_BYTES,
+            vertices, GLES30.GL_STATIC_DRAW,
+        )
+        indices.position(0)
+        GLES30.glBindBuffer(GLES30.GL_ELEMENT_ARRAY_BUFFER, buffers[1])
+        GLES30.glBufferData(
+            GLES30.GL_ELEMENT_ARRAY_BUFFER, indices.capacity() * Int.SIZE_BYTES,
+            indices, GLES30.GL_STATIC_DRAW,
+        )
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
+        GLES30.glBindBuffer(GLES30.GL_ELEMENT_ARRAY_BUFFER, 0)
+        return MeshState(buffers[0], buffers[1], mesh.indices, textureId, alpha, 1f)
+    }
 
+    private fun deleteMesh(state: MeshState) {
+        GLES30.glDeleteBuffers(2, intArrayOf(state.vertexBuffer, state.indexBuffer), 0)
+        GLES30.glDeleteTextures(1, intArrayOf(state.textureId), 0)
+    }
+
+    private fun drawMesh(state: MeshState, time: Float) {
         GLES30.glUseProgram(mainProgram)
 
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
@@ -339,30 +401,31 @@ class MeshGradientRenderer : GLSurfaceView.Renderer {
             if (scaledHeight > 0) scaledWidth.toFloat() / scaledHeight else 1f
         )
 
-        vertexBuffer.position(0)
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, state.vertexBuffer)
+        GLES30.glBindBuffer(GLES30.GL_ELEMENT_ARRAY_BUFFER, state.indexBuffer)
         val strideBytes = 7 * 4
 
         GLES30.glEnableVertexAttribArray(mainAPos)
-        GLES30.glVertexAttribPointer(mainAPos, 2, GLES30.GL_FLOAT, false, strideBytes, vertexBuffer)
+        GLES30.glVertexAttribPointer(mainAPos, 2, GLES30.GL_FLOAT, false, strideBytes, 0)
 
-        vertexBuffer.position(2)
         GLES30.glEnableVertexAttribArray(mainAColor)
-        GLES30.glVertexAttribPointer(mainAColor, 3, GLES30.GL_FLOAT, false, strideBytes, vertexBuffer)
+        GLES30.glVertexAttribPointer(mainAColor, 3, GLES30.GL_FLOAT, false, strideBytes, 2 * Float.SIZE_BYTES)
 
-        vertexBuffer.position(5)
         GLES30.glEnableVertexAttribArray(mainAUv)
-        GLES30.glVertexAttribPointer(mainAUv, 2, GLES30.GL_FLOAT, false, strideBytes, vertexBuffer)
+        GLES30.glVertexAttribPointer(mainAUv, 2, GLES30.GL_FLOAT, false, strideBytes, 5 * Float.SIZE_BYTES)
 
         GLES30.glDrawElements(
             GLES30.GL_TRIANGLES,
-            mesh.indices,
+            state.indexCount,
             GLES30.GL_UNSIGNED_INT,
-            indexBuffer
+            0,
         )
 
         GLES30.glDisableVertexAttribArray(mainAPos)
         GLES30.glDisableVertexAttribArray(mainAColor)
         GLES30.glDisableVertexAttribArray(mainAUv)
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
+        GLES30.glBindBuffer(GLES30.GL_ELEMENT_ARRAY_BUFFER, 0)
     }
 
     private fun drawQuad(textureId: Int, alpha: Float) {
@@ -377,18 +440,18 @@ class MeshGradientRenderer : GLSurfaceView.Renderer {
     }
 
     private fun drawFullScreenQuad() {
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, quadVertexBuffer)
         GLES30.glEnableVertexAttribArray(quadAPos)
-        quadBuffer.position(0)
-        GLES30.glVertexAttribPointer(quadAPos, 2, GLES30.GL_FLOAT, false, 16, quadBuffer)
+        GLES30.glVertexAttribPointer(quadAPos, 2, GLES30.GL_FLOAT, false, 16, 0)
 
         GLES30.glEnableVertexAttribArray(quadATexCoord)
-        quadBuffer.position(2)
-        GLES30.glVertexAttribPointer(quadATexCoord, 2, GLES30.GL_FLOAT, false, 16, quadBuffer)
+        GLES30.glVertexAttribPointer(quadATexCoord, 2, GLES30.GL_FLOAT, false, 16, 2 * Float.SIZE_BYTES)
 
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
 
         GLES30.glDisableVertexAttribArray(quadAPos)
         GLES30.glDisableVertexAttribArray(quadATexCoord)
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
     }
 
     private fun cacheShaderLocations() {
@@ -450,7 +513,7 @@ class MeshGradientRenderer : GLSurfaceView.Renderer {
     fun release() {
         synchronized(this) {
             for (state in meshStates) {
-                GLES30.glDeleteTextures(1, intArrayOf(state.textureId), 0)
+                deleteMesh(state)
             }
             meshStates.clear()
             if (fbo != 0) {
@@ -464,6 +527,10 @@ class MeshGradientRenderer : GLSurfaceView.Renderer {
             }
             if (quadProgram != 0) {
                 GLES30.glDeleteProgram(quadProgram)
+            }
+            if (quadVertexBuffer != 0) {
+                GLES30.glDeleteBuffers(1, intArrayOf(quadVertexBuffer), 0)
+                quadVertexBuffer = 0
             }
         }
     }
@@ -516,14 +583,18 @@ class MeshBackgroundView(context: Context) : GLSurfaceView(context) {
 
     private val renderer = MeshGradientRenderer()
     val hasRenderedAlbum get() = renderer.hasRenderedAlbum
+    val renderedFrameVersion get() = renderer.renderedFrameVersion
     var onSurfaceReadyChanged: ((Boolean) -> Unit)? = null
     private var lastFlowSpeed = renderer.flowSpeed
-    private var lastRenderScale = renderer.renderScale
+    private var lastRenderScale = 0.75f
+    private var bufferWidth = 0
+    private var bufferHeight = 0
     private var lastSubdivision = renderer.subdivision
     private var lastStaticMode = false
     private var lastPlaying = true
     private var renderingRequested = true
     private var hostStarted = true
+    private var continuousRenderingNeeded = true
     private val legacyHolePaint = if (Build.VERSION.SDK_INT < 34) {
         Paint().apply { blendMode = BlendMode.DST_OUT }
     } else null
@@ -533,6 +604,12 @@ class MeshBackgroundView(context: Context) : GLSurfaceView(context) {
         // Dispatch only the first album frame and context recreation to the UI thread.
         renderer.onSurfaceReadyChanged = { ready ->
             post { onSurfaceReadyChanged?.invoke(ready) }
+        }
+        renderer.onRenderDemandChanged = { needed ->
+            post {
+                continuousRenderingNeeded = needed
+                applyRenderMode()
+            }
         }
         setEGLContextClientVersion(3)
         setEGLConfigChooser(8, 8, 8, 8, 0, 0)
@@ -586,20 +663,37 @@ class MeshBackgroundView(context: Context) : GLSurfaceView(context) {
     }
 
     fun updateVolume(v: Float) {
+        if (renderer.volume == v) return
         renderer.volume = v
+        if (renderingRequested && hostStarted) requestRender()
     }
 
     fun setFlowSpeed(speed: Float) {
         if (lastFlowSpeed == speed) return
         lastFlowSpeed = speed
         renderer.flowSpeed = speed
+        requestRender()
     }
 
     fun setRenderScale(scale: Float) {
         if (lastRenderScale == scale) return
         lastRenderScale = scale
-        renderer.renderScale = scale
-        queueEvent { renderer.rebuildFbo() }
+        updateSurfaceBufferSize(width, height)
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        updateSurfaceBufferSize(w, h)
+    }
+
+    private fun updateSurfaceBufferSize(viewWidth: Int, viewHeight: Int) {
+        if (viewWidth <= 0 || viewHeight <= 0) return
+        val width = maxOf(1, (viewWidth * lastRenderScale).toInt())
+        val height = maxOf(1, (viewHeight * lastRenderScale).toInt())
+        if (width == bufferWidth && height == bufferHeight) return
+        bufferWidth = width
+        bufferHeight = height
+        holder.setFixedSize(width, height)
     }
 
     fun setSubdivision(level: Int) {
@@ -612,17 +706,19 @@ class MeshBackgroundView(context: Context) : GLSurfaceView(context) {
         if (lastStaticMode == enable) return
         lastStaticMode = enable
         queueEvent { renderer.setStaticMode(enable) }
+        requestRender()
     }
 
     fun setPlaying(playing: Boolean) {
         if (lastPlaying == playing) return
         lastPlaying = playing
         renderer.setPlaying(playing)
+        requestRender()
     }
 
     private fun applyRenderMode() {
         if (!hostStarted) return
-        renderMode = if (renderingRequested) {
+        renderMode = if (renderingRequested && continuousRenderingNeeded) {
             RENDERMODE_CONTINUOUSLY
         } else {
             RENDERMODE_WHEN_DIRTY

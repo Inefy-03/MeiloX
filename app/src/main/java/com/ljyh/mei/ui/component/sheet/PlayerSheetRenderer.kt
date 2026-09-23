@@ -34,7 +34,6 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.layer.GraphicsLayer
@@ -62,6 +61,7 @@ import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.Backdrop
 import com.kyant.capsule.ContinuousRoundedRectangle
 import com.ljyh.mei.ui.glass.GlassPressHighlight
+import com.ljyh.mei.ui.glass.clipGlassShape
 import com.ljyh.mei.ui.glass.rememberGlassMorphRenderer
 import kotlin.math.roundToInt
 
@@ -353,6 +353,29 @@ private class PlayerHitShape(private val bounds: Rect, private val radius: Float
     }
 }
 
+/** The native underlay keeps its window hole; only its canvas clip is split into small tiles. */
+private fun Modifier.clipPlayerSurface(
+    layers: PlayerSheetLayers,
+    expandedCornerRadius: Float,
+): Modifier = drawWithContent {
+    if (!layers.state.isTransitioning) {
+        drawContent()
+    } else {
+        val progress = layers.state.progress
+        val bounds = playerContainerRect(layers.sourceContainer, layers.hostBounds, progress)
+            .translate(-layers.hostBounds.topLeft)
+        val radius = playerContainerCornerRadius(
+            layers.sourceContainer.height / 2f, expandedCornerRadius, progress,
+        )
+        val shape = ContinuousRoundedRectangle(radius.toDp())
+        val outline = PlayerHitShape(bounds, radius).createOutline(size, layoutDirection, this)
+        val path = (outline as? Outline.Generic)?.path
+        if (path != null) {
+            clipGlassShape(bounds, radius, shape, path) { this@drawWithContent.drawContent() }
+        }
+    }
+}
+
 @Composable
 fun BottomSheet(
     state: BottomSheetState,
@@ -377,6 +400,8 @@ fun BottomSheet(
     val transitionGlassRenderer = rememberGlassMorphRenderer(
         backdrop = transitionBackdrop,
         active = active && transitionGeometryReady,
+        // Only the blurred page sample is reduced; all moving edges and content stay native.
+        renderScale = 1f / 3f,
     )
     val expandedCornerRadius = rememberPlayerScreenCornerRadius(layers.hostBounds)
     SideEffect { layers.updateFrozenBounds() }
@@ -407,6 +432,25 @@ fun BottomSheet(
                 expandedCornerRadius = expandedCornerRadius,
             )
         }
+        // Retain the native Surface across the collapsed anchor. Recreating it on every
+        // opening also recreates EGL, uploads the album and allocates the mesh framebuffer.
+        // FluidBackground stops rendering/capture and makes the Surface transparent at rest.
+        if (state.hasBeenShown) {
+            Box(
+                Modifier.fillMaxSize()
+                    .layout { measurable, constraints ->
+                        val placeable = measurable.measure(constraints)
+                        layout(placeable.width, placeable.height) {
+                            // An invisible AndroidView still participates in hit testing.
+                            if (active || expanded) placeable.place(0, 0)
+                        }
+                    }
+                    .clipPlayerSurface(layers, expandedCornerRadius)
+                    .clearAndSetSemantics { },
+            ) {
+                backgroundContent()
+            }
+        }
         run {
             val visible = active || expanded
             // Keep pager/lyrics composition, but unplace the hidden host so it has no hit targets.
@@ -416,15 +460,6 @@ fun BottomSheet(
                     if (visible) placeable.place(0, 0)
                 }
             }) {
-                if (visible) {
-                    // Never include a native Surface in a Compose layer recording.
-                    Box(
-                        Modifier.fillMaxSize()
-                            .clipPlayerRecordingHost(layers, expandedCornerRadius),
-                    ) {
-                        backgroundContent()
-                    }
-                }
                 BoxWithConstraints(
                     Modifier.fillMaxSize()
                         .clipPlayerRecordingHost(layers, expandedCornerRadius)
@@ -455,7 +490,7 @@ fun BottomSheet(
                     }
                     translate(bounds.topLeft)
                 }
-                clipPath(path) {
+                clipGlassShape(bounds, radius, shellShape, path) {
                     val scale = bounds.width / size.width.coerceAtLeast(1f)
                     if (layers.miniContent.size.width > 0) {
                         layers.miniContent.alpha = playerMiniContentAlpha(p)
