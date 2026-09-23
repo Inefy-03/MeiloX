@@ -357,7 +357,20 @@ private class PlayerHitShape(private val bounds: Rect, private val radius: Float
 private fun Modifier.clipPlayerSurface(
     layers: PlayerSheetLayers,
     expandedCornerRadius: Float,
-): Modifier = drawWithContent {
+): Modifier = graphicsLayer {
+    // Canvas clipping alone leaves the full-screen AndroidView in the hit-test tree.
+    // A rectangular outline rejects touches in the exposed page without reintroducing
+    // the full-screen path mask. The tiled draw clip below keeps the exact corners.
+    clip = layers.state.isTransitioning
+    if (clip) {
+        val bounds = playerContainerRect(layers.sourceContainer, layers.hostBounds, layers.state.progress)
+            .translate(-layers.hostBounds.topLeft)
+        shape = object : Shape {
+            override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density) =
+                Outline.Rectangle(bounds)
+        }
+    }
+}.drawWithContent {
     if (!layers.state.isTransitioning) {
         drawContent()
     } else {
