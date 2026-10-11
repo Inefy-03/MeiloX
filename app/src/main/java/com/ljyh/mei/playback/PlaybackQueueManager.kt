@@ -20,14 +20,19 @@ import com.ljyh.mei.playback.queue.Queue
 import com.ljyh.mei.playback.queue.PlaylistQueueSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
+import timber.log.Timber
 
 @OptIn(UnstableApi::class)
 class PlaybackQueueManager(
@@ -36,14 +41,21 @@ class PlaybackQueueManager(
     private val weApiService: WeApiService,
     private val scope: CoroutineScope,
     private val serverShuffleAllowed: () -> Boolean = { true },
+    private val radioItemFactory: (com.ljyh.mei.data.model.weapi.Data) -> MediaItem = {
+        it.toMediaMetadata().toMediaItem()
+    },
 ) : Player.Listener {
 
     private val TAG = "QueueManager"
     private val _queueState = MutableStateFlow<QueueState>(QueueState.Idle)
     private val loadingIds = ConcurrentHashMap.newKeySet<String>()
     private var activeQueueBuildJob: Job? = null
+    private var pendingSimilarGeneration: Long? = null
     private var queueBuildGeneration = 0L
     private var activeFmGeneration: Long? = null
+    private var similarFmRequest: SimilarFmRequest? = null
+    val similarFmSourceIds: List<String>?
+        get() = similarFmRequest?.sourceIds
     var playlistSource: PlaylistQueueSource? = null
         private set
     private var serverShuffleJob: Job? = null
@@ -54,7 +66,7 @@ class PlaybackQueueManager(
 
     private val _isShuffleModeEnabled = MutableStateFlow(false)
     var isFmMode = false
-    private var isFetchingFm = false
+    private var fetchingFmGeneration: Long? = null
 
 
     init {
@@ -64,10 +76,14 @@ class PlaybackQueueManager(
             queueSelectionJob?.cancel()
             if (replaced) playlistSource = null
         }
-        (player as? StableDeckPlayer)?.onSeekRequested = { queueSelectionJob?.cancel() }
+        (player as? StableDeckPlayer)?.onSeekRequested = {
+            queueSelectionJob?.cancel()
+            cancelPendingSimilarStart()
+        }
     }
 
     fun seekToQueueEntry(entryId: String) {
+        cancelPendingSimilarStart()
         queueSelectionJob?.cancel()
         queueSelectionJob = scope.launch(Dispatchers.Main) {
             val index = (0 until player.mediaItemCount).firstOrNull {
@@ -263,10 +279,76 @@ class PlaybackQueueManager(
         }
     }
 
+    fun startSimilarFmMode(
+        songIds: List<String>,
+        shouldPlay: () -> Boolean = { true },
+    ): Deferred<Boolean> {
+        val request = SimilarFmRequest.fromSongIds(songIds) ?: return CompletableDeferred(false)
+        cancelActiveQueueBuild(clearPlaylistSource = false)
+        val generation = queueBuildGeneration
+        pendingSimilarGeneration = generation
+        val result = scope.async(Dispatchers.Main, start = CoroutineStart.LAZY) {
+            try {
+                _queueState.value = QueueState.Loading(SIMILAR_FM_TITLE)
+                val response = weApiService.getRadio(request.body())
+                currentCoroutineContext().ensureActive()
+                if (generation != queueBuildGeneration || !shouldPlay()) return@async false
+                val items = if (response.code == 200) response.data.orEmpty()
+                    .filter { it.id > 0 }.distinctBy { it.id }
+                    .mapNotNull { runCatching { radioItemFactory(it) }.getOrNull() }
+                else emptyList()
+                if (items.isEmpty()) {
+                    _queueState.value = QueueState.Error("相似歌曲 FM 加载失败")
+                    return@async false
+                }
+
+                // Keep the current queue until a valid recommendation response is ready.
+                pendingSimilarGeneration = null
+                similarFmRequest = request
+                isFmMode = true
+                activeFmGeneration = generation
+                playlistSource = null
+                player.stop()
+                player.clearMediaItems()
+                player.shuffleModeEnabled = false
+                _isShuffleModeEnabled.value = false
+                player.repeatMode = Player.REPEAT_MODE_ALL
+                player.setMediaItems(items, 0, 0L)
+                player.prepare()
+                player.play()
+                _queueState.value = QueueState.Playing(SIMILAR_FM_TITLE, items.size)
+                true
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                if (generation == queueBuildGeneration) {
+                    _queueState.value = QueueState.Error("相似歌曲 FM 加载失败")
+                }
+                Timber.tag(TAG).w(error, "Unable to start similar FM")
+                false
+            } finally {
+                if (pendingSimilarGeneration == generation) pendingSimilarGeneration = null
+                if (generation == queueBuildGeneration) activeQueueBuildJob = null
+            }
+        }
+        activeQueueBuildJob = result
+        result.start()
+        return result
+    }
+
+    fun restoreFmMode(enabled: Boolean, similarSourceIds: List<String>? = null) {
+        similarFmRequest = similarSourceIds?.let(SimilarFmRequest::fromSongIds)
+        // An invalid saved similar context must not silently request personal FM.
+        isFmMode = enabled && (similarSourceIds == null || similarFmRequest != null)
+        if (!isFmMode) similarFmRequest = null
+        activeFmGeneration = queueBuildGeneration.takeIf { isFmMode }
+    }
+
     private suspend fun startFmPlayback(seedItem: MediaItem?, generation: Long) {
         if (generation != queueBuildGeneration) return
 
         isFmMode = true
+        similarFmRequest = null
         activeFmGeneration = generation
         _queueState.value = QueueState.Loading("私人 FM")
 
@@ -292,32 +374,36 @@ class PlaybackQueueManager(
     }
 
     suspend fun fetchAndAppendFmRecommendations(currentId: String? = null) {
-        if (isFetchingFm) return
         if (!isFmMode) return
-        val fmGeneration = activeFmGeneration ?: queueBuildGeneration.also {
-            activeFmGeneration = it
-        }
-        isFetchingFm = true
+        if (activeQueueBuildJob != null && activeFmGeneration != queueBuildGeneration) return
+        val fmGeneration = queueBuildGeneration
+        if (fetchingFmGeneration == fmGeneration) return
+        activeFmGeneration = fmGeneration
+        fetchingFmGeneration = fmGeneration
+        val request = similarFmRequest
         try {
-            // 调用 FM 接口
-            val response = weApiService.getRadio(mapOf())
-            if (response.code == 200 && response.data.isNotEmpty()) {
-
-                // 过滤掉当前正在播放的 ID，防止重复
-                val items = response.data
-                    .filter { it.id.toString() != currentId }
-                    .map { it.toMediaMetadata().toMediaItem() }
+            val response = weApiService.getRadio(request?.body().orEmpty())
+            if (response.code == 200 && !response.data.isNullOrEmpty()) {
+                val items = response.data.filter { it.id > 0 }
+                    .mapNotNull { runCatching { radioItemFactory(it) }.getOrNull() }
 
                 withContext(Dispatchers.Main) {
-                    val regularBuildPending = activeQueueBuildJob != null &&
-                        fmGeneration != queueBuildGeneration
-                    if (!isFmMode || fmGeneration != activeFmGeneration || regularBuildPending) {
+                    if (!isFmMode || fmGeneration != activeFmGeneration ||
+                        fmGeneration != queueBuildGeneration || request != similarFmRequest
+                    ) {
                         return@withContext
                     }
-                    // 追加到列表末尾
-                    player.addMediaItems(items)
+                    val queuedIds = if (request == null) emptySet() else {
+                        (0 until player.mediaItemCount).map { player.getMediaItemAt(it).mediaId }.toSet()
+                    }
+                    val additions = items.filter { it.mediaId != currentId && it.mediaId !in queuedIds }
+                        .let { if (request == null) it else it.distinctBy(MediaItem::mediaId) }
+                    if (additions.isNotEmpty()) player.addMediaItems(additions)
 
-                    _queueState.value = QueueState.Playing("私人 FM", player.mediaItemCount)
+                    _queueState.value = QueueState.Playing(
+                        if (request == null) "私人 FM" else SIMILAR_FM_TITLE,
+                        player.mediaItemCount,
+                    )
 
                     // 触发占位符检查（如果你 FM 接口返回的是简略信息需要补全详情的话）
                     checkAndLoadMetadata()
@@ -328,7 +414,7 @@ class PlaybackQueueManager(
         } catch (e: Exception) {
             Log.e(TAG, "FM Fetch Error", e)
         } finally {
-            isFetchingFm = false
+            if (fetchingFmGeneration == fmGeneration) fetchingFmGeneration = null
         }
     }
 
@@ -370,6 +456,7 @@ class PlaybackQueueManager(
         cancelServerShuffle()
         queueSelectionJob?.cancel()
         activeQueueBuildJob?.cancel()
+        pendingSimilarGeneration = null
         val generation = ++queueBuildGeneration
         activeQueueBuildJob = scope.launch(Dispatchers.Main) {
             try {
@@ -413,6 +500,7 @@ class PlaybackQueueManager(
                 // 2. 停止并重置
                 isFmMode = false
                 activeFmGeneration = null
+                similarFmRequest = null
                 player.stop()
                 player.clearMediaItems()
 
@@ -512,10 +600,11 @@ class PlaybackQueueManager(
     private fun checkAndLoadMetadata(windowSize: Int = 3) {
         scope.launch(Dispatchers.Main) {
             // 基础状态检查 确保线程存活且列表不为空
-            if (!player.applicationLooper.thread.isAlive || player.mediaItemCount == 0) return@launch
+            if (player.mediaItemCount == 0) return@launch
 
             val timeline = player.currentTimeline
             if (timeline.isEmpty) return@launch
+            if (!player.applicationLooper.thread.isAlive) return@launch
 
             val currentIndex = player.currentMediaItemIndex
             val indicesToCheck = mutableSetOf<Int>()
@@ -691,10 +780,22 @@ class PlaybackQueueManager(
         // 不要 cancel scope，因为它是由外部 Service 传进来的
     }
 
-    private fun cancelActiveQueueBuild() {
+    private fun cancelActiveQueueBuild(clearPlaylistSource: Boolean = true) {
         cancelServerShuffle()
         queueSelectionJob?.cancel()
-        playlistSource = null
+        if (clearPlaylistSource) playlistSource = null
+        activeQueueBuildJob?.cancel()
+        activeQueueBuildJob = null
+        pendingSimilarGeneration = null
+        queueBuildGeneration++
+    }
+
+    private fun cancelPendingSimilarStart() {
+        val generation = pendingSimilarGeneration ?: return
+        pendingSimilarGeneration = null
+        if (generation != queueBuildGeneration) return
+        // An explicit queue selection supersedes only the uncommitted similar request.
+        // Preserve the current queue's playlist source and active FM context.
         activeQueueBuildJob?.cancel()
         activeQueueBuildJob = null
         queueBuildGeneration++

@@ -95,6 +95,8 @@ import com.ljyh.mei.utils.rememberPreference
 import java.util.UUID
 import kotlin.math.ceil
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
@@ -270,8 +272,28 @@ private fun HomeBlockItem(
     val playerConnection = LocalPlayerConnection.current ?: return
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var loadingPodcastId by remember { mutableStateOf<String?>(null) }
+    var loadingRecommendationKey by remember { mutableStateOf<String?>(null) }
     var playbackRequestGeneration by remember { mutableIntStateOf(0) }
+
+    fun loadRecommendation(key: String, generation: Int, action: suspend () -> Unit) {
+        loadingRecommendationKey = key
+        scope.launch {
+            try {
+                action()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Timber.tag("HomeRecommendation").e(error, "Unable to load home recommendation")
+                if (generation == playbackRequestGeneration) {
+                    Toast.makeText(context, R.string.load_failed, Toast.LENGTH_SHORT).show()
+                }
+            } finally {
+                if (generation == playbackRequestGeneration) {
+                    loadingRecommendationKey = null
+                }
+            }
+        }
+    }
 
     val playlistCardSize = if (device.isTablet) PlaylistCardSizeTablet else PlaylistCardSize
     val recommendCardWidth = if (device.isTablet) RecommendCardWidthTablet else RecommendCardWidth
@@ -301,6 +323,7 @@ private fun HomeBlockItem(
                 title = getGreeting(),
                 resources = resources
             ) { resource ->
+                val recommendationKey = "${resource.resourceType}:${resource.resourceId}:${resource.action}"
                 RecommendCard(
                     cover = resource.coverImg,
                     title = resource.singleLineTitle?.trim()?.takeIf { it.isNotEmpty() }
@@ -311,12 +334,12 @@ private fun HomeBlockItem(
                     ),
                     cardWidth = recommendCardWidth,
                     cardHeight = recommendCardHeight,
-                    isLoading = loadingPodcastId == resource.resourceId,
+                    isLoading = loadingRecommendationKey == recommendationKey,
                     viewModel = viewModel
                 ) {
-                    if (loadingPodcastId == resource.resourceId) return@RecommendCard
+                    if (loadingRecommendationKey == recommendationKey) return@RecommendCard
                     val requestGeneration = ++playbackRequestGeneration
-                    loadingPodcastId = null
+                    loadingRecommendationKey = null
                     when (resource.resourceType) {
                         "dailySongs" -> Screen.EveryDay.navigate(navController)
                         "star" -> {
@@ -335,32 +358,18 @@ private fun HomeBlockItem(
                         }
 
                         "podcast", "djprogram" -> {
-                            loadingPodcastId = resource.resourceId
-                            scope.launch {
-                                try {
-                                    val program = viewModel.podcastProgram(resource.resourceId.toLong())
-                                    if (requestGeneration != playbackRequestGeneration) return@launch
-                                    val item = program.toMediaMetadata().toMediaItem()
-                                    playerConnection.playQueue(
-                                        ListQueue(
-                                            id = "home_podcast_${program.id}",
-                                            title = resource.subTitle,
-                                            items = listOf(item.mediaId to item),
-                                            startIndex = 0,
-                                        )
+                            loadRecommendation(recommendationKey, requestGeneration) {
+                                val program = viewModel.podcastProgram(resource.resourceId.toLong())
+                                if (requestGeneration != playbackRequestGeneration) return@loadRecommendation
+                                val item = program.toMediaMetadata().toMediaItem()
+                                playerConnection.playQueue(
+                                    ListQueue(
+                                        id = "home_podcast_${program.id}",
+                                        title = resource.subTitle,
+                                        items = listOf(item.mediaId to item),
+                                        startIndex = 0,
                                     )
-                                } catch (error: CancellationException) {
-                                    throw error
-                                } catch (error: Exception) {
-                                    Timber.tag("HomePodcast").e(error, "Unable to play program %s", resource.resourceId)
-                                    if (requestGeneration == playbackRequestGeneration) {
-                                        Toast.makeText(context, R.string.load_failed, Toast.LENGTH_SHORT).show()
-                                    }
-                                } finally {
-                                    if (requestGeneration == playbackRequestGeneration) {
-                                        loadingPodcastId = null
-                                    }
-                                }
+                                )
                             }
                         }
 
@@ -376,17 +385,32 @@ private fun HomeBlockItem(
                             )
                         }
 
-                        "similarSo  ng" -> {
-                            // 相似歌曲
-                            //val id = resource.resourceId // 需要解析 json
-//                            "resourceId": [
-//                            "2060083093",
-//                            "2060086839",
-//                            "2097485069"
-//                            ]
+                        "similarSong" -> {
+                            val songIds = parseRecommendationSongIds(resource.resourceId)
+                            if (songIds.isEmpty()) {
+                                Toast.makeText(context, R.string.load_failed, Toast.LENGTH_SHORT).show()
+                            } else {
+                                loadRecommendation(recommendationKey, requestGeneration) {
+                                    val requestContext = currentCoroutineContext()
+                                    val started = playerConnection.similarFmStart(songIds) {
+                                        requestContext.isActive && requestGeneration == playbackRequestGeneration
+                                    }
+                                    if (requestGeneration == playbackRequestGeneration) {
+                                        check(started) { "Unable to start similar-song recommendations" }
+                                    }
+                                }
+                            }
                         }
 
-                        "dailySongs" -> {}
+                        "nonstandard" -> {
+                            val playlistId = parseRecommendationPlaylistId(resource.action, resource.playBtnData)
+                            if (playlistId != null) {
+                                Screen.PlayList.navigate(navController) { addPath(playlistId.toString()) }
+                            } else {
+                                Toast.makeText(context, R.string.load_failed, Toast.LENGTH_SHORT).show()
+                            }
+                        }
+
                         "similarArtist" -> {
                             // 从喜欢的艺人听起
                             // val ids = resourceId // 需要解析 json， 跳转艺人界面
@@ -398,6 +422,7 @@ private fun HomeBlockItem(
                         }
 
                         "playList" -> Screen.PlayList.navigate(navController) { addPath(resource.resourceId) }
+                        else -> Toast.makeText(context, R.string.load_failed, Toast.LENGTH_SHORT).show()
                     }
                 }
             }

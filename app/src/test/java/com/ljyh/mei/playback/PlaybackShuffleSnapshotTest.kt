@@ -66,4 +66,26 @@ class PlaybackShuffleSnapshotTest {
         val original = PlaybackSnapshot(sourceType = PlaybackSnapshot.SOURCE_PERSONAL_FM)
         assertTrue(gson.fromJson(gson.toJson(original), PlaybackSnapshot::class.java).isFmMode)
     }
+
+    @Test
+    fun similarFmRoundTripKeepsTheOriginalSeedsForRefill() {
+        val original = PlaybackSnapshot(
+            sourceType = PlaybackSnapshot.SOURCE_PERSONAL_FM,
+            similarFmSourceIds = listOf("42", "19", "7"),
+        )
+        val restored = gson.fromJson(gson.toJson(original), PlaybackSnapshot::class.java)
+        assertTrue(restored.isFmMode)
+        assertEquals(listOf("42", "19", "7"), restored.similarFmSourceIds)
+        assertEquals("[42,19,7]", SimilarFmRequest.fromSongIds(restored.similarFmSourceIds!!)!!.body()["sourceIds"])
+    }
+
+    @Test
+    fun oldPersonalFmSnapshotDoesNotInventSimilarSources() {
+        val restored = gson.fromJson(
+            """{"schemaVersion":2,"sourceType":"personal_fm","items":[]}""",
+            PlaybackSnapshot::class.java,
+        )
+        assertTrue(restored.isFmMode)
+        assertNull(restored.similarFmSourceIds)
+    }
 }

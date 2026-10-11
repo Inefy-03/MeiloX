@@ -34,7 +34,9 @@ import com.ljyh.mei.utils.dataStore
 import com.ljyh.mei.utils.get
 import com.ljyh.mei.utils.reportException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import androidx.datastore.preferences.core.edit
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -132,9 +134,24 @@ class PlayerConnection(
     fun fmStart(firstSongId: String? = null) {
 
         service.scope.launch {
+            service.queueTitle = "私人 FM"
+            queueTitle.value = service.queueTitle
             service.queueManager.startFmModeById(firstSongId)
         }
     }
+
+    suspend fun similarFmStart(
+        songIds: List<String>,
+        shouldPlay: () -> Boolean = { true },
+    ): Boolean = service.scope.async(Dispatchers.Main.immediate) {
+        service.queueManager.startSimilarFmMode(songIds, shouldPlay).await().also { started ->
+            if (started) {
+                service.queueTitle = SIMILAR_FM_TITLE
+                queueTitle.value = service.queueTitle
+                isFMMode.value = true
+            }
+        }
+    }.await()
 
 
     fun playQueue(queue: ListQueue, shuffle: Boolean? = null) {
@@ -262,6 +279,7 @@ class PlayerConnection(
     }
 
     override fun onTimelineChanged(timeline: Timeline, reason: Int) {
+        isFMMode.value = service.isFmMode()
         queueWindows.value = player.getQueueWindows()
         queueTitle.value = service.queueTitle
         currentMediaItemIndex.value = player.currentMediaItemIndex

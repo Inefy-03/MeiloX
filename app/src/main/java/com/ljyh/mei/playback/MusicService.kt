@@ -341,9 +341,10 @@ class MusicService : MediaLibraryService(),
             }
         })
 
-        queueManager = PlaybackQueueManager(player, apiService, weApiService, scope) {
-            listenTogetherStore.state.value.room == null
-        }
+        queueManager = PlaybackQueueManager(
+            player, apiService, weApiService, scope,
+            serverShuffleAllowed = { listenTogetherStore.state.value.room == null },
+        )
         scope.launch {
             context.dataStore.data
                 .map { it[CloudShuffleEnabledKey] ?: true }
@@ -432,7 +433,7 @@ class MusicService : MediaLibraryService(),
                     val restoredItems = restoredState.second
                     val restoredIndex = snapshot.currentIndex.coerceIn(restoredItems.indices)
                     queueTitle = snapshot.queueTitle
-                    queueManager.isFmMode = snapshot.isFmMode
+                    queueManager.restoreFmMode(snapshot.isFmMode, snapshot.similarFmSourceIds)
                     player.shuffleModeEnabled = false
                     player.setMediaItems(
                         restoredItems,
@@ -496,6 +497,7 @@ class MusicService : MediaLibraryService(),
             queueTitle = queueTitle,
             isFmMode = queueManager.isFmMode,
             playlistSource = queueManager.playlistSource,
+            similarFmSourceIds = queueManager.similarFmSourceIds,
         )
         withContext(NonCancellable) {
             runCatching { playbackPersistence.save(snapshot) }
@@ -505,7 +507,10 @@ class MusicService : MediaLibraryService(),
 
     private fun persistPlaybackSnapshotBlocking() {
         if (isRestoringPlayback || !::playbackPersistence.isInitialized) return
-        val snapshot = playbackPersistence.capture(player, queueTitle, queueManager.isFmMode, queueManager.playlistSource)
+        val snapshot = playbackPersistence.capture(
+            player, queueTitle, queueManager.isFmMode, queueManager.playlistSource,
+            queueManager.similarFmSourceIds,
+        )
         runCatching {
             runBlocking(Dispatchers.IO) { playbackPersistence.save(snapshot) }
         }.onFailure { Timber.tag("MusicService").w(it, "Unable to save final playback snapshot") }

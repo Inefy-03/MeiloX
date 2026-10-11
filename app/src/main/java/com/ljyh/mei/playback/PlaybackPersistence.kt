@@ -66,6 +66,7 @@ data class PlaybackSnapshot(
     val sourceType: String = SOURCE_QUEUE,
     val shuffleOrder: List<Int>? = null,
     val playlistSource: PlaylistQueueSource? = null,
+    val similarFmSourceIds: List<String>? = null,
 ) {
     val isFmMode: Boolean
         get() = sourceType == SOURCE_PERSONAL_FM
@@ -117,6 +118,7 @@ class PlaybackPersistence(
         queueTitle: String?,
         isFmMode: Boolean,
         playlistSource: PlaylistQueueSource? = null,
+        similarFmSourceIds: List<String>? = null,
     ): PlaybackSnapshot {
         val items = cachedItems ?: buildList(player.mediaItemCount) {
             repeat(player.mediaItemCount) { index ->
@@ -136,6 +138,7 @@ class PlaybackPersistence(
             queueTitle = queueTitle,
             shuffleOrder = cachedOrder ?: player.playbackOrderIndices(true).also { cachedOrder = it },
             playlistSource = if (isFmMode) null else playlistSource,
+            similarFmSourceIds = if (isFmMode) similarFmSourceIds else null,
             sourceType = if (isFmMode) {
                 PlaybackSnapshot.SOURCE_PERSONAL_FM
             } else {
@@ -150,7 +153,8 @@ class PlaybackPersistence(
                 val previous = savedQueue
                 val sameQueue = previous != null && previous.items === snapshot.items &&
                     previous.shuffleOrder === snapshot.shuffleOrder && previous.queueTitle == snapshot.queueTitle &&
-                    previous.sourceType == snapshot.sourceType && previous.playlistSource == snapshot.playlistSource
+                    previous.sourceType == snapshot.sourceType && previous.playlistSource == snapshot.playlistSource &&
+                    previous.similarFmSourceIds == snapshot.similarFmSourceIds
                 if (!sameQueue) {
                     val queue = snapshot.copy(savedAtEpochMs = maxOf(snapshot.savedAtEpochMs, (previous?.savedAtEpochMs ?: 0L) + 1))
                     val encoded = gson.toJson(queue)
