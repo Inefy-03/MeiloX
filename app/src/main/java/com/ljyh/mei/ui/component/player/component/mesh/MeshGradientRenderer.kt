@@ -206,6 +206,20 @@ class MeshGradientRenderer : GLSurfaceView.Renderer {
         }
 
         if (staticMode && isStatic) {
+            // GLSurfaceView swaps buffers even when this callback does no drawing. Replay
+            // the settled FBO on explicit redraws instead of exposing an undefined back buffer.
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+            GLES30.glViewport(0, 0, viewWidth, viewHeight)
+            GLES30.glClearColor(0f, 0f, 0f, 1f)
+            GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
+            GLES30.glEnable(GLES30.GL_BLEND)
+            GLES30.glBlendFuncSeparate(
+                GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA,
+                GLES30.GL_ONE, GLES30.GL_ONE_MINUS_SRC_ALPHA,
+            )
+            drawQuad(fboTexture, 1f)
+            GLES30.glDisable(GLES30.GL_BLEND)
+            renderedFrameVersion++
             updateRenderDemand()
             return
         }
