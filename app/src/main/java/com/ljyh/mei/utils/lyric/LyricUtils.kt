@@ -18,6 +18,37 @@ fun createDefaultLyricData(
     )
 }
 
+/** Keep a usable snapshot while parallel sources are still resolving. */
+internal fun selectLyricUpdate(
+    current: LyricData,
+    candidate: LyricData,
+    sourcesFinished: Boolean,
+    alignmentFinished: Boolean,
+): LyricData {
+    if (candidate == current) return current
+    val currentPriority = current.displayPriority()
+    val candidatePriority = candidate.displayPriority()
+    if (candidatePriority == 0) {
+        if (currentPriority > 0 || !sourcesFinished) return current
+        return if (candidate.lyricLine.lines.isEmpty()) {
+            createDefaultLyricData("没有歌词")
+        } else candidate
+    }
+    if (candidatePriority < currentPriority) return current
+    if (candidatePriority == currentPriority && !alignmentFinished) return current
+    return candidate
+}
+
+private fun LyricData.displayPriority(): Int {
+    if (lyricLine.lines.isEmpty()) return 0
+    return when (source) {
+        LyricSource.AM -> 5
+        LyricSource.NetEaseCloudMusic -> if (isVerbatim) 4 else 2
+        LyricSource.QQMusic -> if (isVerbatim) 3 else 1
+        LyricSource.Empty, LyricSource.Loading -> 0
+    }
+}
+
 fun mergeLyrics(sources: List<LyricSourceData>, isPureMusic: Boolean = false): LyricData {
 //    Timber.tag("LyricUtils").d("mergeLyrics: $sources")
     // 找到 NetEase 的逐字歌词（yrc + tlyric）
@@ -107,7 +138,7 @@ fun mergeLyrics(sources: List<LyricSourceData>, isPureMusic: Boolean = false): L
     return createDefaultLyricData(
         if (isPureMusic) "纯音乐，请欣赏" else "没有歌词",
         isPureMusic = isPureMusic,
-        source = if (isPureMusic) LyricSource.NetEaseCloudMusic else LyricSource.Empty
+        source = LyricSource.Empty
     )
 }
 

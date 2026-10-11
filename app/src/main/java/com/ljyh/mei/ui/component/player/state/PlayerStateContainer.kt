@@ -24,7 +24,6 @@ import com.ljyh.mei.playback.PlayerConnection
 import com.ljyh.mei.ui.component.player.PlayerViewModel
 import com.ljyh.mei.ui.local.LocalPlayerConnection
 import com.ljyh.mei.ui.model.LyricData
-import com.ljyh.mei.ui.model.LyricSource
 import com.ljyh.mei.utils.lyric.createDefaultLyricData
 import com.ljyh.mei.utils.rememberPreference
 import kotlinx.coroutines.delay
@@ -91,7 +90,6 @@ class PlayerStateContainer(
         internal set
 
     fun reset() {
-        lyricLine = createDefaultLyricData("歌词加载中", source = LyricSource.Loading)
         sliderPosition = 0f
         duration = 0L
     }
@@ -177,6 +175,7 @@ fun rememberPlayerStateContainer(
             container.currentSongId = meta.id.toString()
             container.reset()
             playerViewModel.lyricManager.loadLyrics(meta)
+            container.lyricLine = playerViewModel.lyricManager.lyricData.value
         }
     }
 

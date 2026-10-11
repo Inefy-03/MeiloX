@@ -50,7 +50,7 @@ class LyricNullResponseTest {
             isPureMusic = true
         )
         assertTrue(result.isPureMusic)
-        assertEquals(LyricSource.NetEaseCloudMusic, result.source)
+        assertEquals(LyricSource.Empty, result.source)
     }
 
     @Test
