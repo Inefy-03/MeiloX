@@ -40,7 +40,10 @@ class DuetDetector @Inject constructor() {
 
         return when (winner) {
             "netease" -> buildOutput(netVerbatim, netLine, netTranslation, duet, LyricSource.NetEaseCloudMusic)
-            "qq" -> buildOutput(qqVerbatim, qqLine, qqTranslation, duet, LyricSource.QQMusic)
+            "qq" -> buildOutput(
+                qqVerbatim, qqLine, qqTranslation, duet, LyricSource.QQMusic,
+                duetLrc = netLine
+            )
             else -> null
         }
     }
@@ -73,14 +76,15 @@ class DuetDetector @Inject constructor() {
         line: String?,
         translation: String?,
         duet: List<DuetSegment>?,
-        source: LyricSource
+        source: LyricSource,
+        duetLrc: String? = line
     ): LyricData? {
         if (verbatim != null) {
             val parsed = when (source) {
                 LyricSource.QQMusic -> QRCParser.parse(verbatim, translation)
                 else -> YRCParser.parse(verbatim, translation)
             }
-            val lyrics = if (duet != null) applyDuetAlignment(parsed, duet, line) else parsed
+            val lyrics = if (duet != null) applyDuetAlignment(parsed, duet, duetLrc) else parsed
             if (lyrics.lines.isNotEmpty()) {
                 return LyricData(
                     isVerbatim = true, isPureMusic = false,
@@ -91,7 +95,7 @@ class DuetDetector @Inject constructor() {
         }
         if (line != null) {
             val parsed = LRCParser.parse(line, translation)
-            val lyrics = if (duet != null) applyDuetAlignment(parsed, duet) else parsed
+            val lyrics = if (duet != null) applyDuetAlignment(parsed, duet, duetLrc) else parsed
             if (lyrics.lines.isNotEmpty()) {
                 return LyricData(
                     isVerbatim = false, isPureMusic = false,
@@ -122,7 +126,7 @@ class DuetDetector @Inject constructor() {
         val roles = mutableSetOf<String>()
         for (i in lines.indices) {
             val match = markRegex.find(lines[i].trim()) ?: continue
-            val role = match.groupValues[3]
+            val role = singerRole(match.groupValues[3]) ?: continue
             val tsMs = match.groupValues[1].toInt() * 60 * 1000 + (match.groupValues[2].toDouble() * 1000).toLong()
             if (i + 1 < lines.size) {
                 val nextMatch = Regex("""^\[(\d+):(\d+(?:\.\d+)?)\]""").find(lines[i + 1].trim())
@@ -136,14 +140,25 @@ class DuetDetector @Inject constructor() {
     }
 
     private fun hasRolePrefixes(lrc: String): Boolean {
-        val roleRegex = Regex("""^\[\d+:\d+(?:\.\d+)?\](?:【([^】]+)】|(\S{1,8})[：:])\s*""")
         val roles = mutableSetOf<String>()
         for (line in lrc.lines()) {
-            val match = roleRegex.find(line.trim()) ?: continue
-            val role = (match.groupValues[1].ifBlank { match.groupValues[2] }).trim()
-            if (role.isNotBlank()) roles.add(role.lowercase())
+            prefixRole(line)?.let(roles::add)
         }
         return roles.size >= 2
+    }
+
+    private fun prefixRole(line: String): String? {
+        val match = ROLE_PREFIX_REGEX.find(line.trim()) ?: return null
+        return singerRole(match.groupValues[1].ifBlank { match.groupValues[2] })
+    }
+
+    private fun singerRole(label: String): String? {
+        val role = label.trim().lowercase()
+        if (role.isEmpty()) return null
+        val labels = role.split(CREDIT_SEPARATOR_REGEX).filter { it.isNotEmpty() }
+        // Song credits use the same punctuation as singer labels, but never define a voice.
+        if (labels.isNotEmpty() && labels.all { it.replace(" ", "") in CREDIT_LABELS }) return null
+        return role
     }
 
     private fun detectStandaloneSegments(lrc: String): List<DuetSegment>? {
@@ -158,7 +173,7 @@ class DuetDetector @Inject constructor() {
             val line = lines[i].trim()
             val markMatch = markRegex.find(line)
             if (markMatch != null) {
-                val role = markMatch.groupValues[3]
+                val role = singerRole(markMatch.groupValues[3]) ?: continue
                 val tsMs = markMatch.groupValues[1].toInt() * 60 * 1000 + (markMatch.groupValues[2].toDouble() * 1000).toLong()
                 val nextIsLyric = i + 1 < lines.size &&
                     Regex("""^\[(\d+):(\d+(?:\.\d+)?)\]""").find(lines[i + 1].trim())?.let {
@@ -182,16 +197,12 @@ class DuetDetector @Inject constructor() {
     }
 
     private fun detectPrefixSegments(lrc: String): List<DuetSegment>? {
-        val roleRegex = Regex("""^\[\d+:\d+(?:\.\d+)?\](?:【([^】]+)】|(\S{1,8})[：:])\s*""")
         val segments = mutableListOf<DuetSegment>()
         var currentRole: String? = null
         var currentStart = -1
 
         for ((i, line) in lrc.lines().withIndex()) {
-            val match = roleRegex.find(line.trim())
-            val role = match?.let {
-                (it.groupValues[1].ifBlank { it.groupValues[2] }).trim().takeIf { r -> r.isNotBlank() }
-            }
+            val role = prefixRole(line)
             if (role != null) {
                 if (currentRole != null && currentRole != role.lowercase() && currentStart >= 0) {
                     segments.add(DuetSegment(currentRole, currentStart, i))
@@ -221,16 +232,16 @@ class DuetDetector @Inject constructor() {
             if (line is KaraokeLine.MainKaraokeLine) line.copy(alignment = KaraokeAlignment.Unspecified) else line
         }
 
-        val timeRanges: List<Pair<Long, Long>>? = lrcForTimestamps?.let { lrc ->
+        val timeRanges = lrcForTimestamps?.let { lrc ->
             val lrcLines = lrc.lines()
-            duet.mapIndexed { i, seg ->
-                val startTs = extractTimestampMs(lrcLines.getOrNull(seg.startLine) ?: "") ?: 0L
-                val endTs = if (i + 1 < duet.size) {
-                    extractTimestampMs(lrcLines.getOrNull(duet[i + 1].startLine) ?: "") ?: (startTs + 3000L)
-                } else {
-                    startTs + 3000L
-                }
-                startTs to endTs
+            duet.mapIndexedNotNull { i, seg ->
+                val startTs = extractTimestampMs(lrcLines.getOrNull(seg.startLine) ?: "")
+                    ?: return@mapIndexedNotNull null
+                val endTs = duet.getOrNull(i + 1)?.let { next ->
+                    extractTimestampMs(lrcLines.getOrNull(next.startLine) ?: "")
+                } ?: Long.MAX_VALUE
+                // The final singer remains active to the end; the next singer owns the boundary.
+                seg to (startTs until endTs)
             }
         }
 
@@ -239,7 +250,7 @@ class DuetDetector @Inject constructor() {
             val fallbackSeg = duet.firstOrNull { idx in it.startLine until it.endLine }
             val seg = if (timeRanges != null) {
                 val start = (line as? KaraokeLine)?.start?.toLong() ?: return@mapIndexed line
-                duet.zip(timeRanges).firstOrNull { (_, range) -> start in range.first..range.second }?.first
+                timeRanges.firstOrNull { (_, range) -> start in range }?.first
                     ?: return@mapIndexed line
             } else {
                 fallbackSeg ?: return@mapIndexed line
@@ -272,5 +283,17 @@ class DuetDetector @Inject constructor() {
 
     companion object {
         private const val TAG = "DuetDetector"
+        private val ROLE_PREFIX_REGEX =
+            Regex("""^\[\d+:\d+(?:\.\d+)?\](?:【([^】]+)】|(\S{1,8})[：:])\s*""")
+        private val CREDIT_SEPARATOR_REGEX = Regex("""[/／&＆+、]""")
+        private val CREDIT_LABELS = setOf(
+            "词", "曲", "词曲", "作词", "填词", "作曲", "编曲", "演唱", "原唱", "翻唱",
+            "制作", "制作人", "监制", "录音", "录制", "混音", "母带", "和声", "和声编写",
+            "吉他", "贝斯", "钢琴", "鼓", "弦乐", "绘图", "题字", "出品", "发行", "版权",
+            "lyric", "lyrics", "lyricist", "words", "writtenby", "songwriter",
+            "music", "composer", "composition", "arranger", "arrangement", "arrangedby",
+            "vocal", "vocals", "singer", "sungby", "producer", "producedby",
+            "recording", "recordedby", "mix", "mixing", "mixedby", "mastering", "masteredby"
+        )
     }
 }

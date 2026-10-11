@@ -522,8 +522,11 @@ class LyricManager @Inject constructor(
         val netSuccess = net as? Resource.Success
         val qqSuccess = qq as? Resource.Success
         val qqTerminal = qq is Resource.Success || qq is Resource.Error
+        val netTerminal = net is Resource.Success || net is Resource.Error
 
-        if (qqTerminal && !qqFinalized) {
+        // Role detection needs NetEase's timeline even when QQ supplies the words.
+        // Do not let response order permanently skip the alignment pass.
+        if (netTerminal && qqTerminal && !qqFinalized) {
             qqFinalized = true
 
             // 仅在有对唱标记的网易云歌词时触发本地对唱解析
