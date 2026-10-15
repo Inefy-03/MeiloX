@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import coil3.imageLoader
@@ -26,7 +27,10 @@ import com.ljyh.mei.ui.component.sheet.LocalPlayerSheet
 import com.ljyh.mei.ui.component.sheet.playerBackgroundAlpha
 import com.ljyh.mei.ui.component.player.LocalPlayerBackdropFrame
 import com.ljyh.mei.ui.component.player.component.mesh.MeshBackgroundView
-import com.ljyh.mei.ui.component.utils.rememberLifecycleStarted
+import com.ljyh.mei.ui.component.utils.LifecycleStartedEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleStartEffect
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.ljyh.mei.ui.glass.trackBackdropPosition
 import com.ljyh.mei.playback.PlaybackBeatMeter
 import com.ljyh.mei.playback.PlaybackSpectrum
@@ -58,7 +62,7 @@ fun FluidBackground(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val lifecycleStarted by rememberLifecycleStarted()
+    val lifecycleOwner = LocalLifecycleOwner.current
     val sheet = LocalPlayerSheet.current
     val backdropFrame = LocalPlayerBackdropFrame.current
     val expanded by remember(sheet) {
@@ -75,7 +79,7 @@ fun FluidBackground(
     val backgroundOpacity = alpha.coerceIn(0f, 1f)
     // Keep EGL and the album texture across openings without rendering hidden frames.
     // Start immediately on a new gesture, before the opening fade becomes noticeable.
-    val backgroundActive = lifecycleStarted && backgroundVisible && sheetVisible
+    val backgroundActive = backgroundVisible && sheetVisible
     val (flowSpeed) = rememberPreference(MeshFlowSpeedKey, defaultValue = 0.25f)
     val (renderScale) = rememberPreference(MeshRenderScaleKey, defaultValue = 0.75f)
     val (staticMode) = rememberPreference(MeshStaticModeKey, defaultValue = false)
@@ -84,8 +88,8 @@ fun FluidBackground(
     val (subdivision) = rememberPreference(MeshSubdivisionKey, defaultValue = 50)
 
     val audioReactive = backgroundActive && expanded && isPlaying && !staticMode && sensitivity > 0f
-    LaunchedEffect(meshView, beatMeter, audioReactive, sensitivity) {
-        val view = meshView ?: return@LaunchedEffect
+    LifecycleStartedEffect(meshView, beatMeter, audioReactive, sensitivity) {
+        val view = meshView ?: return@LifecycleStartedEffect
         // Update the native renderer directly: audio samples must not recompose the player.
         // The existing sensitivity setting ranges from 0 to 0.5; visual limits stay bounded.
         view.setAudioStrength(if (audioReactive) (sensitivity * 2f).coerceIn(0f, 1f) else 0f)
@@ -151,8 +155,11 @@ fun FluidBackground(
         view.setPlaying(shouldAnimate)
     }
 
-    LaunchedEffect(meshView, lifecycleStarted) {
-        meshView?.setHostStarted(lifecycleStarted)
+    // Stop native rendering directly, even when Compose's frame clock is suspended.
+    LifecycleStartEffect(meshView) {
+        val view = meshView
+        view?.setHostStarted(true)
+        onStopOrDispose { view?.setHostStarted(false) }
     }
 
     LaunchedEffect(meshView, backgroundActive) {
@@ -163,10 +170,12 @@ fun FluidBackground(
     // instead; glass blurs it heavily, so this resolution preserves the visual result without
     // reading a full-screen buffer every frame. Static mode captures through the mesh fade-in
     // and then stops, while animated mode keeps the sample moving at roughly 15 fps.
-    LaunchedEffect(meshView, backdropFrame, albumBitmap, staticMode, shouldAnimate, backgroundActive) {
-        if (!backgroundActive) return@LaunchedEffect
-        val view = meshView ?: return@LaunchedEffect
-        val target = backdropFrame ?: return@LaunchedEffect
+    val captureActive = backgroundActive && expanded
+    LifecycleStartedEffect(meshView, backdropFrame, albumBitmap, staticMode, shouldAnimate, captureActive) {
+        // Entry motion samples the home page; only expanded-player glass needs PixelCopy.
+        if (!captureActive) return@LifecycleStartedEffect
+        val view = meshView ?: return@LifecycleStartedEffect
+        val target = backdropFrame ?: return@LifecycleStartedEffect
         var attempts = 0
         val continuous = !staticMode && shouldAnimate
 
@@ -200,10 +209,10 @@ fun FluidBackground(
                     captureState[2] = 0
                 }
 
-                val bitmap = captureBuffers[captureState[2]] ?: return@LaunchedEffect
+                val bitmap = captureBuffers[captureState[2]] ?: return@LifecycleStartedEffect
                 captureState[2] = (captureState[2] + 1) % captureBuffers.size
                 if (copySurfaceFrame(view, bitmap, pixelCopyHandler)) {
-                    if (!isActive) return@LaunchedEffect
+                    if (!isActive) return@LifecycleStartedEffect
                     target.value = bitmap.asImageBitmap()
                     capturedFrameVersion[0] = frameVersion
                 }
@@ -222,6 +231,7 @@ fun FluidBackground(
         Box(
             Modifier
                 .fillMaxSize()
+                .graphicsLayer()
                 .layerBackdrop(backdrop)
                 .trackBackdropPosition(backdrop),
         )
@@ -237,7 +247,7 @@ fun FluidBackground(
                     setStaticMode(staticMode)
                     setPlaying(shouldAnimate)
                     setPreserveEGLContextOnPause(true)
-                    setHostStarted(lifecycleStarted)
+                    setHostStarted(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
                     setRenderingRequested(backgroundActive)
                 }
             },

@@ -6,6 +6,8 @@ import android.graphics.BlendMode
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.os.Build
+import android.os.Handler
+import android.os.HandlerThread
 import android.opengl.GLES30
 import android.opengl.GLSurfaceView
 import android.opengl.GLUtils
@@ -138,6 +140,7 @@ class MeshGradientRenderer : GLSurfaceView.Renderer {
     }
 
     override fun onSurfaceCreated(gl: GL10?, config: javax.microedition.khronos.egl.EGLConfig?) {
+        resetFrameClock()
         hasRenderedAlbum = false
         onSurfaceReadyChanged?.invoke(false)
 
@@ -219,6 +222,7 @@ class MeshGradientRenderer : GLSurfaceView.Renderer {
             )
             drawQuad(fboTexture, 1f)
             GLES30.glDisable(GLES30.GL_BLEND)
+            lastFrameNanos = System.nanoTime()
             renderedFrameVersion++
             updateRenderDemand()
             return
@@ -228,13 +232,13 @@ class MeshGradientRenderer : GLSurfaceView.Renderer {
         val playing = isPlaying
         val frameDelta = now - lastFrameNanos
         lastFrameNanos = now
-        if (playing) {
+        if (playing && !staticMode) {
             accumulatedPlayingNanos += frameDelta
         }
         val time = accumulatedPlayingNanos / 1e9f * flowSpeed
         updateAudioResponse(frameDelta / 1e9f)
 
-        updateMeshStates(1f / 60f)
+        updateMeshStates((frameDelta / 1e9f).coerceIn(0f, 0.1f))
 
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
         GLES30.glClearColor(0f, 0f, 0f, 1f)
@@ -375,13 +379,18 @@ class MeshGradientRenderer : GLSurfaceView.Renderer {
     }
 
     fun setStaticMode(enable: Boolean) {
+        resetFrameClock()
         staticMode = enable
         if (!enable) isStatic = false
     }
 
+    fun resetFrameClock() {
+        lastFrameNanos = System.nanoTime()
+    }
+
     fun setPlaying(playing: Boolean) {
         if (!isPlaying && playing) {
-            lastFrameNanos = System.nanoTime()
+            resetFrameClock()
         }
         isPlaying = playing
     }
@@ -645,9 +654,13 @@ class MeshBackgroundView(context: Context) : GLSurfaceView(context) {
     private var lastSubdivision = renderer.subdivision
     private var lastStaticMode = false
     private var lastPlaying = true
-    private var renderingRequested = true
-    private var hostStarted = true
-    private var continuousRenderingNeeded = true
+    @Volatile private var renderingRequested = true
+    @Volatile private var hostStarted = true
+    @Volatile private var continuousRenderingNeeded = true
+    @Volatile private var attached = false
+    @Volatile private var frameHandler: Handler? = null
+    private var frameThread: HandlerThread? = null
+    private var frameCallback: Runnable? = null
     private val legacyHolePaint = if (Build.VERSION.SDK_INT < 34) {
         Paint().apply { blendMode = BlendMode.DST_OUT }
     } else null
@@ -698,6 +711,7 @@ class MeshBackgroundView(context: Context) : GLSurfaceView(context) {
         if (renderingRequested == active) return
         renderingRequested = active
         if (!hostStarted) return
+        if (active) queueEvent { renderer.resetFrameClock() }
         applyRenderMode()
         if (active) requestRender()
     }
@@ -706,11 +720,13 @@ class MeshBackgroundView(context: Context) : GLSurfaceView(context) {
         if (hostStarted == started) return
         hostStarted = started
         if (started) {
+            // Queue the reset before resume can request its first frame.
+            queueEvent { renderer.resetFrameClock() }
             onResume()
             applyRenderMode()
             requestRender()
         } else {
-            renderMode = RENDERMODE_WHEN_DIRTY
+            applyRenderMode()
             onPause()
         }
     }
@@ -746,8 +762,14 @@ class MeshBackgroundView(context: Context) : GLSurfaceView(context) {
 
     private fun updateSurfaceBufferSize(viewWidth: Int, viewHeight: Int) {
         if (viewWidth <= 0 || viewHeight <= 0) return
-        val width = maxOf(1, (viewWidth * lastRenderScale).toInt())
-        val height = maxOf(1, (viewHeight * lastRenderScale).toInt())
+        // The source is a blurred 32px texture. Bound the working buffer on large displays.
+        val scale = minOf(
+            lastRenderScale.coerceIn(0.1f, 1f),
+            720f / minOf(viewWidth, viewHeight),
+            1440f / maxOf(viewWidth, viewHeight),
+        )
+        val width = maxOf(1, (viewWidth * scale).toInt())
+        val height = maxOf(1, (viewHeight * scale).toInt())
         if (width == bufferWidth && height == bufferHeight) return
         bufferWidth = width
         bufferHeight = height
@@ -770,21 +792,55 @@ class MeshBackgroundView(context: Context) : GLSurfaceView(context) {
     fun setPlaying(playing: Boolean) {
         if (lastPlaying == playing) return
         lastPlaying = playing
-        renderer.setPlaying(playing)
+        queueEvent { renderer.setPlaying(playing) }
         requestRender()
     }
 
     private fun applyRenderMode() {
-        if (!hostStarted) return
-        renderMode = if (renderingRequested && continuousRenderingNeeded) {
-            RENDERMODE_CONTINUOUSLY
-        } else {
-            RENDERMODE_WHEN_DIRTY
+        renderMode = RENDERMODE_WHEN_DIRTY
+        val handler = frameHandler ?: return
+        val callback = frameCallback ?: return
+        // Cancel and restart on the clock thread, so an in-flight tick cannot fork its loop.
+        handler.post {
+            handler.removeCallbacks(callback)
+            if (frameHandler === handler && shouldScheduleFrames()) handler.post(callback)
         }
     }
 
+    private fun shouldScheduleFrames() =
+        hostStarted && renderingRequested && continuousRenderingNeeded && attached
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        if (!hostStarted) onPause()
+        queueEvent { renderer.resetFrameClock() }
+        val thread = HandlerThread("MeshFrameClock").apply { start() }
+        val handler = Handler(thread.looper)
+        frameThread = thread
+        frameHandler = handler
+        frameCallback = object : Runnable {
+            override fun run() {
+                if (frameHandler !== handler || !shouldScheduleFrames()) return
+                // Ambient flow uses about 30 fps; audio response uses about 60 fps.
+                // A separate clock does not keep the main UI at the display refresh rate.
+                requestRender()
+                handler.postDelayed(this, if (renderer.audioStrength > 0f) 16L else 33L)
+            }
+        }
+        attached = true
+        applyRenderMode()
+    }
+
     override fun onDetachedFromWindow() {
+        attached = false
+        val handler = frameHandler
+        frameHandler = null
+        frameCallback = null
+        handler?.removeCallbacksAndMessages(null)
+        frameThread?.quitSafely()
+        frameThread = null
+        // GLSurfaceView destroys its GL context here. A queued release after this call
+        // cannot run; onSurfaceCreated rebuilds the resources if this view reattaches.
         super.onDetachedFromWindow()
-        queueEvent { renderer.release() }
     }
 }
