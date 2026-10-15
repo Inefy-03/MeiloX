@@ -206,6 +206,9 @@
     <string name="settings_appearance">外观</string>
     <string name="appearance_settings">外观</string>
     <string name="appearance_theme">主题</string>
+    <string name="appearance_letter_spacing">界面字间距</string>
+    <string name="appearance_letter_spacing_value">%1$.1f sp</string>
+    <string name="appearance_letter_spacing_preview">Mei，听见每一种心情</string>
     <string name="appearance_dynamic_theme">歌曲动态主题</string>
     <string name="appearance_dynamic_theme_description">根据当前歌曲封面为界面着色。</string>
     <string name="appearance_accent_color">强调色</string>

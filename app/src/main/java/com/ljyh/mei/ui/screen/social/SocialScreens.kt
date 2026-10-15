@@ -537,7 +537,6 @@ private fun IosMessageBubble(
                     color = colors.secondaryContent,
                     fontSize = 10.sp,
                     lineHeight = 14.sp,
-                    letterSpacing = 1.sp,
                 ),
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
@@ -550,7 +549,6 @@ private fun IosMessageBubble(
                     color = colors.secondaryContent,
                     fontSize = 10.sp,
                     lineHeight = 14.sp,
-                    letterSpacing = 1.sp,
                 ),
                 modifier = Modifier.padding(horizontal = 12.dp).padding(bottom = 4.dp),
             )

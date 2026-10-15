@@ -20,7 +20,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.ljyh.mei.R
 import com.ljyh.mei.constants.AccompanimentLyricTextBoldKey
 import com.ljyh.mei.constants.AccentColorKey
@@ -29,7 +33,9 @@ import com.ljyh.mei.constants.CoverStyle
 import com.ljyh.mei.constants.CoverStyleKey
 import com.ljyh.mei.constants.DebugKey
 import com.ljyh.mei.constants.DefaultAccentColorArgb
+import com.ljyh.mei.constants.DefaultInterfaceLetterSpacing
 import com.ljyh.mei.constants.DynamicThemeKey
+import com.ljyh.mei.constants.InterfaceLetterSpacingKey
 import com.ljyh.mei.constants.LyricTextSize
 import com.ljyh.mei.constants.MeshFlowSpeedKey
 import com.ljyh.mei.constants.MeshLowFreqVolumeKey
@@ -54,16 +60,19 @@ import com.ljyh.mei.constants.TabletAnimationStyle
 import com.ljyh.mei.constants.TabletAnimationStyleKey
 import com.ljyh.mei.ui.glass.GlassCard
 import com.ljyh.mei.ui.glass.GlassIconButton
+import com.ljyh.mei.ui.glass.GlassSlider
 import com.ljyh.mei.ui.glass.GlassToggle
 import com.ljyh.mei.ui.glass.SfIcon
 import com.ljyh.mei.ui.glass.SfSymbol
 import com.ljyh.mei.ui.glass.IosColorPicker
 import com.ljyh.mei.ui.glass.IosPinnedListPage
 import com.ljyh.mei.ui.glass.IosPopupButton
+import com.ljyh.mei.ui.glass.IosTypography
 import com.ljyh.mei.ui.local.LocalNavController
 import com.ljyh.mei.ui.local.LocalPlayerAwareWindowInsets
 import com.ljyh.mei.utils.rememberEnumPreference
 import com.ljyh.mei.utils.rememberPreference
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -74,6 +83,7 @@ fun AppearanceSettings(
     val insets = LocalPlayerAwareWindowInsets.current.asPaddingValues()
     val (dynamicTheme, setDynamicTheme) = rememberPreference(DynamicThemeKey, true)
     val (accentColorArgb, setAccentColorArgb) = rememberPreference(AccentColorKey, DefaultAccentColorArgb)
+    val (letterSpacing, setLetterSpacing) = rememberPreference(InterfaceLetterSpacingKey, DefaultInterfaceLetterSpacing)
     val customAccent = accentColorArgb != DefaultAccentColorArgb
     var showColorPicker by remember { mutableStateOf(false) }
     val (playlistStyle, setPlaylistStyle) = rememberEnumPreference(PlaylistCoverStyleKey, PlaylistCoverStyle.Cover)
@@ -122,6 +132,7 @@ fun AppearanceSettings(
                     },
                     enabled = !dynamicTheme,
                 )
+                AppearanceLetterSpacing(letterSpacing, setLetterSpacing)
             }
         }
         item {
@@ -217,6 +228,46 @@ fun AppearanceSettings(
         onDismiss = { showColorPicker = false },
         title = stringResource(R.string.appearance_accent_color),
     )
+}
+
+@Composable
+private fun AppearanceLetterSpacing(savedSpacing: Float, setSpacing: (Float) -> Unit) {
+    val spacing = (savedSpacing.takeIf { it.isFinite() } ?: DefaultInterfaceLetterSpacing).coerceIn(0f, 3f)
+    // Keep the latest local edit visible while consecutive preference writes settle.
+    var draftSpacing by remember { mutableStateOf<Float?>(null) }
+    val displayedSpacing = draftSpacing ?: spacing
+    val title = stringResource(R.string.appearance_letter_spacing)
+    val valueLabel = stringResource(R.string.appearance_letter_spacing_value, displayedSpacing)
+
+    GlassCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.fillMaxWidth().padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SfIcon("textformat.size", null)
+                Text(title, Modifier.weight(1f).padding(horizontal = 13.dp))
+                Text(valueLabel, style = IosTypography.subheadline, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            GlassSlider(
+                value = displayedSpacing,
+                onValueChange = { draftSpacing = it },
+                onValueChangeFinished = {
+                    val rounded = ((draftSpacing ?: spacing) * 10f).roundToInt() / 10f
+                    draftSpacing = rounded
+                    setSpacing(rounded)
+                },
+                valueRange = 0f..3f,
+                modifier = Modifier.padding(horizontal = 10.dp).semantics {
+                    contentDescription = title
+                    stateDescription = valueLabel
+                },
+            )
+            Text(
+                stringResource(R.string.appearance_letter_spacing_preview),
+                style = IosTypography.body.copy(letterSpacing = displayedSpacing.sp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+    }
 }
 
 @Composable

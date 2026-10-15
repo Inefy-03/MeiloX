@@ -20,6 +20,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -47,6 +48,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.Dp
@@ -99,10 +101,13 @@ private val LocalLiquidTabScale = staticCompositionLocalOf { { 1f } }
 val CompactBottomControlIconSize = 22.dp
 
 private val ExpandedNavigationIconSize = 28.dp
-private val NavigationLabelStyle = IosTypography.caption.copy(
-    fontSize = 10.sp,
-    lineHeight = 13.sp,
-)
+private val NavigationLabelStyle: TextStyle
+    @Composable
+    @ReadOnlyComposable
+    get() = IosTypography.caption.copy(
+        fontSize = 10.sp,
+        lineHeight = 13.sp,
+    )
 private const val CompactIndicatorFadeStart = 0.74f
 private const val CompactIndicatorFadeEnd = 0.98f
 private const val CompactTabContentScaleFloor = 0.82f

@@ -207,6 +207,9 @@
     <string name="settings_appearance">Appearance</string>
     <string name="appearance_settings">Appearance</string>
     <string name="appearance_theme">Theme</string>
+    <string name="appearance_letter_spacing">Interface letter spacing</string>
+    <string name="appearance_letter_spacing_value">%1$.1f sp</string>
+    <string name="appearance_letter_spacing_preview">Mei, music for every mood</string>
     <string name="appearance_dynamic_theme">Dynamic song theme</string>
     <string name="appearance_dynamic_theme_description">Tint the interface from the current artwork.</string>
     <string name="appearance_accent_color">Accent color</string>

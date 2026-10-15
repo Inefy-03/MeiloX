@@ -51,6 +51,8 @@ val CoverStyleKey = stringPreferencesKey("coverStyle")
 val DynamicThemeKey = booleanPreferencesKey("dynamicTheme")
 const val DefaultAccentColorArgb = 0xFFFF3B30L
 val AccentColorKey = longPreferencesKey("accentColor")
+const val DefaultInterfaceLetterSpacing = 1f
+val InterfaceLetterSpacingKey = floatPreferencesKey("interfaceLetterSpacing")
 val PlayerActionKey = stringPreferencesKey("playerBottomAction")
 
 val NormalLyricTextSizeKey = stringPreferencesKey("lyricTextSize")
