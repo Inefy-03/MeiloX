@@ -93,8 +93,8 @@ android {
             .get()
         minSdk = 33
         targetSdk = 37
-        versionCode = 11
-        versionName = "1.54.6"
+        versionCode = 14
+        versionName = "1.55.0"
         buildConfigField("long", "BUILD_NUMBER", "${buildNumber}L")
         buildConfigField("String", "BUILD_COMMIT_SHA", "\"$buildCommitSha\"")
         buildConfigField("boolean", "BUILD_SOURCE_DIRTY", buildSourceDirty.toString())
@@ -165,7 +165,7 @@ kotlin {
 dependencies {
 
     implementation(libs.androidx.core.ktx)
-    implementation("org.bouncycastle:bcprov-jdk18on:1.85.2")
+    implementation(libs.bcprov.jdk18on)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
@@ -188,10 +188,10 @@ dependencies {
     implementation(libs.annotations)
     implementation(libs.androidx.core.animation)
     implementation(libs.androidx.compose.material3.window.size.class1)
-    implementation("com.github.luben:zstd-jni:1.5.7-20@aar")
+    implementation(libs.zstd.jni)
     testImplementation(libs.junit)
-    testRuntimeOnly("com.github.luben:zstd-jni:1.5.7-20")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:${libs.versions.kotlinxCoroutinesGuava.get()}")
+    testRuntimeOnly(libs.zstd.jni)
+    testImplementation(libs.kotlinx.coroutines.test)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.ui.test.junit4)
@@ -253,8 +253,8 @@ dependencies {
     // 歌词组件
     implementation(libs.lyrics.core)
     implementation(libs.lyrics.ui)
-    implementation("io.github.proify.lyricon:provider:0.1.70")
-    implementation("com.github.HChenX:SuperLyricApi:3.4")
+    implementation(libs.provider)
+    implementation(libs.superlyricapi)
     implementation(libs.zoomable)
     implementation(libs.timber)
     implementation(libs.compose.cloudy)
