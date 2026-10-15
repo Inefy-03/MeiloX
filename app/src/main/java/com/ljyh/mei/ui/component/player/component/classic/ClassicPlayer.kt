@@ -7,11 +7,10 @@ import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.State
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.util.UnstableApi
@@ -50,8 +49,6 @@ fun ClassicPlayer(
     // --- 从状态容器获取数据 ---
     val mediaMetadata by stateContainer.mediaMetadata
     val isPlaying by stateContainer.isPlaying
-    val sliderPosition by remember { derivedStateOf { stateContainer.sliderPosition } }
-    val duration by remember { derivedStateOf { stateContainer.duration } }
     BottomSheet(
         state = state,
         modifier = modifier,
@@ -79,8 +76,9 @@ fun ClassicPlayer(
         },
         collapsedContent = {
             MiniPlayer(
-                position = sliderPosition.toLong(),
-                duration = duration,
+                // These parameters are unused by the mini player.
+                position = 0L,
+                duration = 0L,
                 backdrop = collapsedBackdrop,
                 compactProgress = compactMiniPlayerProgress,
                 onClick = state::expandSoft,
@@ -90,6 +88,7 @@ fun ClassicPlayer(
         Box(
             Modifier
                 .fillMaxSize()
+                .graphicsLayer()
                 .layerBackdrop(playerContentBackdrop)
                 .trackBackdropPosition(playerContentBackdrop),
         ) {

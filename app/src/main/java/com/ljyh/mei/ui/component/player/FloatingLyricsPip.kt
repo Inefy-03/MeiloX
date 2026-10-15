@@ -20,7 +20,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import com.ljyh.mei.ui.component.utils.LifecycleStartedEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
@@ -98,9 +99,9 @@ fun FloatingLyricsPipScreen(
     viewModel: PlayerViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
-    val metadata by playerConnection.mediaMetadata.collectAsState()
-    val isPlaying by playerConnection.isPlaying.collectAsState()
-    val lyricData by viewModel.lyric.collectAsState()
+    val metadata by playerConnection.mediaMetadata.collectAsStateWithLifecycle()
+    val isPlaying by playerConnection.isPlaying.collectAsStateWithLifecycle()
+    val lyricData by viewModel.lyric.collectAsStateWithLifecycle()
     val (showsTranslation) = rememberPreference(FloatingLyricsTranslationKey, true)
     val (showsNextLine) = rememberPreference(FloatingLyricsNextLineKey, true)
     val (fontScale) = rememberPreference(FloatingLyricsFontScaleKey, 1f)
@@ -109,7 +110,7 @@ fun FloatingLyricsPipScreen(
     LaunchedEffect(metadata?.id) {
         metadata?.let { viewModel.lyricManager.loadLyrics(it) }
     }
-    LaunchedEffect(isPlaying) {
+    LifecycleStartedEffect(isPlaying, playerConnection) {
         (context as? Activity)?.setPictureInPictureParams(
             floatingLyricsPipParams(context, isPlaying),
         )
@@ -177,7 +178,7 @@ fun FloatingLyricsPipScreen(
 
 @Composable
 fun FloatingLyricsPipBackdrop(playerConnection: PlayerConnection) {
-    val metadata by playerConnection.mediaMetadata.collectAsState()
+    val metadata by playerConnection.mediaMetadata.collectAsStateWithLifecycle()
     Box(Modifier.fillMaxSize().background(Color(0xFF151217))) {
         AsyncImage(
             model = metadata?.coverUrl,

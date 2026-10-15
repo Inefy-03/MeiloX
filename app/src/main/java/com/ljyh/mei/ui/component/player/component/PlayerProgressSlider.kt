@@ -23,9 +23,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,6 +42,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ljyh.mei.ui.local.LocalPlayerConnection
+import com.ljyh.mei.ui.component.sheet.LocalPlayerSheet
+import com.ljyh.mei.ui.component.utils.rememberLifecycleStarted
 import com.ljyh.mei.utils.TimeUtils.makeTimeString
 import kotlin.math.PI
 import kotlin.math.roundToLong
@@ -81,17 +85,23 @@ fun PlayerProgressSlider(
         (sliderPosition / valueRange.endInclusive).coerceIn(0f, 1f)
     } else 0f
 
-    // 动画：波浪的相位 (Phase) - 让波浪动起来
-    val infiniteTransition = rememberInfiniteTransition(label = "wave_anim")
-    val phase by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = if (isPlaying) (2 * PI).toFloat() else 0f, // 只有播放时才滚动
-        animationSpec = infiniteRepeatable(
-            animation = tween(2000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "phase"
-    )
+    // Only keep the phase clock while its wave is visible and moving.
+    val sheet = LocalPlayerSheet.current
+    val lifecycleStarted by rememberLifecycleStarted()
+    val expanded by remember(sheet) { derivedStateOf { sheet == null || sheet.state.isExpanded } }
+    val phase by if (isPlaying && lifecycleStarted && expanded) {
+        rememberInfiniteTransition(label = "wave_anim").animateFloat(
+            initialValue = 0f,
+            targetValue = (2 * PI).toFloat(),
+            animationSpec = infiniteRepeatable(
+                animation = tween(2000, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart,
+            ),
+            label = "phase",
+        )
+    } else {
+        rememberUpdatedState(0f)
+    }
 
     // 如果暂停了，我们也可以让波浪慢慢变平，或者保持静止。
     // Android 原生行为是播放时波浪滚动，拖拽时波浪变直。

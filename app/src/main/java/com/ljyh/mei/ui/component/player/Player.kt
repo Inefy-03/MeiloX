@@ -36,7 +36,6 @@ import com.ljyh.mei.ui.component.player.state.PlayerStateContainer
 import com.ljyh.mei.ui.component.player.state.rememberPlayerStateContainer
 import com.ljyh.mei.ui.component.sheet.BottomSheetState
 import com.ljyh.mei.ui.component.utils.rememberDeviceInfo
-import com.ljyh.mei.ui.component.utils.rememberLifecycleStarted
 import com.ljyh.mei.ui.local.LocalNavController
 import com.ljyh.mei.ui.local.LocalPlayerConnection
 import com.ljyh.mei.ui.glass.LocalBlurBackdrop
@@ -109,12 +108,11 @@ fun BottomSheetPlayer(
     val playerStyle by rememberEnumPreference(PlayerStyleKey, defaultValue = PlayerStyle.AppleMusic)
 
     // 创建公共状态容器
-    val lifecycleStarted by rememberLifecycleStarted()
-    val sheetCollapsed by remember(state) { derivedStateOf { state.isCollapsed } }
+    val sheetExpanded by remember(state) { derivedStateOf { state.isExpanded } }
     val stateContainer = rememberPlayerStateContainer(
         playerViewModel = playerViewModel,
         playerConnection = playerConnection,
-        progressUpdatesEnabled = lifecycleStarted && !sheetCollapsed,
+        progressUpdatesEnabled = sheetExpanded,
     )
 
     // 创建弹窗处理器

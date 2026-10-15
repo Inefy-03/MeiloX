@@ -11,7 +11,7 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -25,8 +25,8 @@ import com.ljyh.mei.utils.rememberEnumPreference
 @OptIn(UnstableApi::class)
 @Composable
 fun PlayerControlsSection(
-    sliderPosition: Float,
-    duration: Long,
+    position: () -> Long,
+    duration: () -> Long,
     isPlaying: Boolean,
     playbackState: Int,
     playerConnection: PlayerConnection,
@@ -41,41 +41,12 @@ fun PlayerControlsSection(
     // 紧凑模式下间距减半
     val spacerHeight = if (isCompact) 8.dp else 24.dp
 
-    val (progressBarStyle, _) = rememberEnumPreference(
-        key = ProgressBarStyleKey,
-        defaultValue = ProgressBarStyle.LINEAR
-    )
-
-    val isFM = playerConnection.isFMMode.collectAsState()
+    val isFM = playerConnection.isFMMode.collectAsStateWithLifecycle()
 
     Column(
         modifier = Modifier.fillMaxWidth()
     ) {
-        if (progressBarStyle == ProgressBarStyle.LINEAR) {
-            FluidProgressSlider(
-                position = sliderPosition.toLong(),
-                duration = duration,
-                onPositionChange = { newPosition ->
-                    playerConnection.player.seekTo(newPosition)
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = PlayerHorizontalPadding + 8.dp)
-            )
-        } else {
-            PlayerProgressSlider(
-                position = sliderPosition.toLong(),
-                duration = duration,
-                isPlaying = isPlaying, // 波浪进度条需要这个参数
-                onPositionChange = { newPosition ->
-                    playerConnection.player.seekTo(newPosition)
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = PlayerHorizontalPadding + 8.dp)
-            )
-        }
-
+        PlayerProgressSection(position, duration, isPlaying, playerConnection)
 
         Spacer(Modifier.height(spacerHeight))
 
@@ -112,5 +83,32 @@ fun PlayerControlsSection(
             // 紧凑模式底部留白少一点
             Spacer(Modifier.height(16.dp))
         }
+    }
+}
+
+@OptIn(UnstableApi::class)
+@Composable
+private fun PlayerProgressSection(
+    position: () -> Long,
+    duration: () -> Long,
+    isPlaying: Boolean,
+    playerConnection: PlayerConnection,
+) {
+    // Read the ticking position here so only progress recomposes, leaving the
+    // title, sheet and glass playback controls outside this update boundary.
+    val progressBarStyle = rememberEnumPreference(
+        key = ProgressBarStyleKey,
+        defaultValue = ProgressBarStyle.LINEAR,
+    ).value
+    val currentPosition = position()
+    val currentDuration = duration()
+    val modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = PlayerHorizontalPadding + 8.dp)
+    val seek: (Long) -> Unit = { playerConnection.player.seekTo(it) }
+    if (progressBarStyle == ProgressBarStyle.LINEAR) {
+        FluidProgressSlider(currentPosition, currentDuration, seek, modifier)
+    } else {
+        PlayerProgressSlider(currentPosition, currentDuration, isPlaying, seek, modifier)
     }
 }

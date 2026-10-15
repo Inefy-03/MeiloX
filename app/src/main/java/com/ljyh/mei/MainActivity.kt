@@ -362,6 +362,7 @@ class MainActivity : ComponentActivity() {
 
                 onDispose {
                     // Compose 销毁时解绑
+                    playerConnection?.dispose()
                     context.unbindService(connection)
                     playerConnection = null
                 }
