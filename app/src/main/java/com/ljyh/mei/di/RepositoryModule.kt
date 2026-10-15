@@ -6,6 +6,7 @@ import com.ljyh.mei.data.network.api.ApiService
 import com.ljyh.mei.data.network.QQMusicUApiService
 import com.ljyh.mei.data.network.NeteaseLoginSecurity
 import com.ljyh.mei.data.network.api.EApiService
+import com.ljyh.mei.data.network.api.MeloXDirectService
 import com.ljyh.mei.data.network.api.WeApiService
 import com.ljyh.mei.data.repository.HomeRepository
 import com.ljyh.mei.data.repository.PlayerRepository
@@ -21,6 +22,7 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
+import javax.inject.Named
 import com.ljyh.mei.utils.dataStore
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -91,7 +93,12 @@ object RepositoryModule {
 
     @Singleton
     @Provides
-    fun provideCommentRepository(apiService: ApiService, weApiService: WeApiService): CommentRepository {
-        return CommentRepository(apiService, weApiService)
+    fun provideCommentRepository(
+        apiService: ApiService,
+        weApiService: WeApiService,
+        @Named("MeloXEapi") directEapi: MeloXDirectService,
+        @Named("MeloXWeapi") directWeapi: MeloXDirectService,
+    ): CommentRepository {
+        return CommentRepository(apiService, weApiService, directEapi, directWeapi)
     }
 }

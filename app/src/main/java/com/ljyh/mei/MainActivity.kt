@@ -526,7 +526,8 @@ class MainActivity : ComponentActivity() {
                     val windowsInsets = WindowInsets.systemBars
                     val currentRoute = navController.currentRoute
                     val handlesKeyboardInsets = active || currentRoute == Screen.Search.route ||
-                        currentRoute?.startsWith("${Screen.PrivateConversation.route}/") == true
+                        currentRoute?.startsWith("${Screen.PrivateConversation.route}/") == true ||
+                        currentRoute?.startsWith("${Screen.Comment.route}/") == true
                     DisposableEffect(handlesKeyboardInsets) {
                         val previousMode = window.attributes.softInputMode
                         if (handlesKeyboardInsets) {

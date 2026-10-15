@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="comment_hide_replies">收起回覆</string>
+    <string name="comment_show_replies">展開 %1$d 則回覆</string>
+    <string name="comment_reply">回覆</string>
+    <string name="comment_like">按讚評論</string>
+    <string name="comment_unlike">取消按讚</string>
+    <string name="comment_liked">已按讚</string>
+    <string name="comment_not_liked">未按讚</string>
+    <string name="comment_replying_to">回覆 %1$s</string>
+    <string name="comment_cancel_reply">取消回覆</string>
+    <string name="comment_placeholder">寫下你的評論…</string>
+    <string name="comment_published">評論已傳送</string>
+    <string name="comment_send_failed">傳送失敗：%1$s</string>
+    <string name="comment_action_failed">按讚操作失敗：%1$s</string>
+    <string name="comment_login_hint">登入後參與討論</string>
+    <string name="comment_sign_in">登入</string>
+    <string name="comment_empty">還沒有評論，分享你的感受吧。</string>
+    <string name="comment_retry">重試</string>
+</resources>

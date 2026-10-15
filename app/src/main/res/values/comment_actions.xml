@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="comment_hide_replies">Hide replies</string>
+    <string name="comment_show_replies">Show %1$d replies</string>
+    <string name="comment_reply">Reply</string>
+    <string name="comment_like">Like comment</string>
+    <string name="comment_unlike">Unlike comment</string>
+    <string name="comment_liked">Liked</string>
+    <string name="comment_not_liked">Not liked</string>
+    <string name="comment_replying_to">Replying to %1$s</string>
+    <string name="comment_cancel_reply">Cancel reply</string>
+    <string name="comment_placeholder">Add a comment…</string>
+    <string name="comment_published">Comment sent</string>
+    <string name="comment_send_failed">Could not send: %1$s</string>
+    <string name="comment_action_failed">Could not update like: %1$s</string>
+    <string name="comment_login_hint">Sign in to join the conversation</string>
+    <string name="comment_sign_in">Sign in</string>
+    <string name="comment_empty">No comments yet. Share your thoughts.</string>
+    <string name="comment_retry">Retry</string>
+</resources>

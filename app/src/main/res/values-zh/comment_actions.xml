@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="comment_hide_replies">收起回复</string>
+    <string name="comment_show_replies">展开 %1$d 条回复</string>
+    <string name="comment_reply">回复</string>
+    <string name="comment_like">点赞评论</string>
+    <string name="comment_unlike">取消点赞</string>
+    <string name="comment_liked">已点赞</string>
+    <string name="comment_not_liked">未点赞</string>
+    <string name="comment_replying_to">回复 %1$s</string>
+    <string name="comment_cancel_reply">取消回复</string>
+    <string name="comment_placeholder">写下你的评论…</string>
+    <string name="comment_published">评论已发送</string>
+    <string name="comment_send_failed">发送失败：%1$s</string>
+    <string name="comment_action_failed">点赞操作失败：%1$s</string>
+    <string name="comment_login_hint">登录后参与讨论</string>
+    <string name="comment_sign_in">登录</string>
+    <string name="comment_empty">还没有评论，分享你的感受吧。</string>
+    <string name="comment_retry">重试</string>
+</resources>

@@ -6,6 +6,7 @@ import com.ljyh.mei.data.model.api.CommentSortType
 import com.ljyh.mei.data.model.weapi.CommentX
 import com.ljyh.mei.data.network.Resource
 import com.ljyh.mei.data.repository.CommentRepository
+import kotlinx.coroutines.CancellationException
 import timber.log.Timber
 
 class CommentPagingSource(
@@ -39,8 +40,9 @@ class CommentPagingSource(
                 is Resource.Success -> {
                     val data = result.data.data
                     if (pageNo == 1) onTotalReceived(data.totalCount)
-                    if (sortType == CommentSortType.TIME && data.comments.isNotEmpty()) {
-                        lastCursor = data.comments.last().time.toString()
+                    if (sortType == CommentSortType.TIME) {
+                        lastCursor = data.cursor?.takeIf(String::isNotBlank)
+                            ?: data.comments.lastOrNull()?.time?.toString() ?: lastCursor
                     }
                     LoadResult.Page(
                         data = data.comments,
@@ -49,16 +51,15 @@ class CommentPagingSource(
                     )
                 }
                 is Resource.Error -> LoadResult.Error(Exception(result.message))
-                Resource.Loading -> LoadResult.Page(emptyList(), null, null)
+                Resource.Loading -> LoadResult.Error(IllegalStateException("Comment request did not finish"))
             }
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             LoadResult.Error(e)
         }
     }
 
     override fun getRefreshKey(state: PagingState<Int, CommentX>): Int? = null
 
-    companion object {
-        var lastCursor: String = "0"
-    }
+    private var lastCursor: String = "0"
 }
