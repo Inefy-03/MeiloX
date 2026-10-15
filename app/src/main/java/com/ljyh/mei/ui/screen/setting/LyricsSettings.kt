@@ -12,6 +12,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -56,7 +60,9 @@ fun LyricsSettings() {
     val (systemLyrics, onSystemLyrics) = rememberPreference(SystemLyricsEnabledKey, true)
     val (floatingTranslation, onFloatingTranslation) = rememberPreference(FloatingLyricsTranslationKey, true)
     val (floatingNext, onFloatingNext) = rememberPreference(FloatingLyricsNextLineKey, true)
-    val (floatingScale, onFloatingScale) = rememberPreference(FloatingLyricsFontScaleKey, 1f)
+    val (storedFloatingScale, onFloatingScale) = rememberPreference(FloatingLyricsFontScaleKey, 1f)
+    var floatingScalePreview by remember { mutableStateOf<Float?>(null) }
+    val floatingScale = floatingScalePreview ?: storedFloatingScale
 
     IosPinnedListPage(
         title = stringResource(R.string.lyrics_settings),
@@ -119,7 +125,14 @@ fun LyricsSettings() {
                             Text(stringResource(R.string.floating_lyrics_size), modifier = Modifier.weight(1f))
                             Text("${(floatingScale * 100).toInt()}%", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        GlassSlider(value = floatingScale, onValueChange = onFloatingScale, valueRange = .75f..1.35f)
+                        GlassSlider(
+                            value = floatingScale,
+                            onValueChange = { floatingScalePreview = it },
+                            valueRange = .75f..1.35f,
+                            onValueChangeFinished = {
+                                onFloatingScale(floatingScalePreview ?: storedFloatingScale)
+                            },
+                        )
                     }
                 }
                 GlassCard(Modifier.fillMaxWidth()) {

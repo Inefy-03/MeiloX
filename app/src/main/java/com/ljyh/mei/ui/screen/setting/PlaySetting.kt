@@ -14,6 +14,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -65,13 +69,17 @@ fun PlaySetting(
     val (noAudioSource, onNoAudioSourceChange) = rememberPreference(NoAudioSourceKey, false)
     val (autoMixEnabled, onAutoMixEnabledChange) = rememberPreference(AutoMixEnabledKey, false)
     val (autoMixMode, onAutoMixModeChange) = rememberEnumPreference(AutoMixModeKey, AutoMixMode.Smart)
-    val (autoMixDuration, onAutoMixDurationChange) = rememberPreference(AutoMixDurationKey, 8f)
+    val (storedAutoMixDuration, onAutoMixDurationChange) = rememberPreference(AutoMixDurationKey, 8f)
     val (fadeCurve, onFadeCurveChange) = rememberEnumPreference(AutoMixFadeCurveKey, AutoMixFadeCurve.EqualPower)
     val (tempoMatching, onTempoMatchingChange) = rememberPreference(AutoMixTempoMatchingKey, true)
-    val (maximumTempo, onMaximumTempoChange) = rememberPreference(AutoMixMaxTempoAdjustmentKey, 5f)
+    val (storedMaximumTempo, onMaximumTempoChange) = rememberPreference(AutoMixMaxTempoAdjustmentKey, 5f)
     val (transitionBars, onTransitionBarsChange) = rememberPreference(AutoMixTransitionBarsKey, 8)
     val (tailCutBars, onTailCutBarsChange) = rememberPreference(AutoMixTailCutBarsKey, 4)
     val insets = LocalPlayerAwareWindowInsets.current.asPaddingValues()
+    var autoMixDurationPreview by remember { mutableStateOf<Float?>(null) }
+    var maximumTempoPreview by remember { mutableStateOf<Float?>(null) }
+    val autoMixDuration = autoMixDurationPreview ?: storedAutoMixDuration
+    val maximumTempo = maximumTempoPreview ?: storedMaximumTempo
 
     IosPinnedListPage(
         title = stringResource(R.string.playback_settings),
@@ -117,7 +125,15 @@ fun PlaySetting(
                         selected = autoMixMode, onSelected = onAutoMixModeChange,
                         modifier = Modifier.fillMaxWidth().padding(10.dp),
                     )
-                    SliderRow(stringResource(R.string.automix_duration, autoMixDuration.roundToInt()), autoMixDuration, onAutoMixDurationChange, 3f..20f)
+                    SliderRow(
+                        title = stringResource(R.string.automix_duration, autoMixDuration.roundToInt()),
+                        value = autoMixDuration,
+                        onValueChange = { autoMixDurationPreview = it },
+                        range = 3f..20f,
+                        onValueChangeFinished = {
+                            onAutoMixDurationChange(autoMixDurationPreview ?: storedAutoMixDuration)
+                        },
+                    )
                     GlassSegmentedControl(
                         items = listOf(
                             AutoMixFadeCurve.EqualPower to stringResource(R.string.fade_equal_power),
@@ -137,7 +153,15 @@ fun PlaySetting(
                         modifier = Modifier.fillMaxWidth().padding(10.dp),
                     )
                     ToggleRow(stringResource(R.string.tempo_matching), "waveform.path", tempoMatching, onTempoMatchingChange)
-                    if (tempoMatching) SliderRow(stringResource(R.string.maximum_tempo_adjustment, maximumTempo.roundToInt()), maximumTempo, onMaximumTempoChange, 1f..8f)
+                    if (tempoMatching) SliderRow(
+                        title = stringResource(R.string.maximum_tempo_adjustment, maximumTempo.roundToInt()),
+                        value = maximumTempo,
+                        onValueChange = { maximumTempoPreview = it },
+                        range = 1f..8f,
+                        onValueChangeFinished = {
+                            onMaximumTempoChange(maximumTempoPreview ?: storedMaximumTempo)
+                        },
+                    )
                 }
             }
         }
@@ -187,11 +211,23 @@ private fun ValueRow(title: String, symbol: String, value: @Composable () -> Uni
 }
 
 @Composable
-private fun SliderRow(title: String, value: Float, onValueChange: (Float) -> Unit, range: ClosedFloatingPointRange<Float>) {
+private fun SliderRow(
+    title: String,
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    range: ClosedFloatingPointRange<Float>,
+    onValueChangeFinished: () -> Unit,
+) {
     GlassCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp)) {
             Text(title)
-            GlassSlider(value, onValueChange, modifier = Modifier.fillMaxWidth(), valueRange = range)
+            GlassSlider(
+                value,
+                onValueChange,
+                modifier = Modifier.fillMaxWidth(),
+                valueRange = range,
+                onValueChangeFinished = onValueChangeFinished,
+            )
         }
     }
 }

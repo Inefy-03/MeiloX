@@ -3,6 +3,7 @@ package com.ljyh.mei.ui.glass
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -48,8 +49,10 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -207,7 +210,10 @@ fun GlassToggle(
     }
 }
 
-/** iOS 27 liquid slider, directly adapted from skill-liquid-glass/LiquidSlider.kt. */
+/**
+ * iOS 27 liquid slider with immediate local drag feedback.
+ * The caller owns [value]; use local preview state when persisting changes asynchronously.
+ */
 @Composable
 fun GlassSlider(
     value: Float,
@@ -216,6 +222,7 @@ fun GlassSlider(
     valueRange: ClosedFloatingPointRange<Float> = 0f..1f,
     enabled: Boolean = true,
     backdrop: Backdrop = LocalGlassBackdrop.current,
+    onValueChangeFinished: (() -> Unit)? = null,
 ) {
     require(valueRange.start < valueRange.endInclusive)
     val colors = LocalGlassColors.current
@@ -224,16 +231,53 @@ fun GlassSlider(
     val track = if (light) Color(0xFF787878).copy(alpha = 0.20f)
     else Color(0xFF787880).copy(alpha = 0.36f)
     val trackBackdrop = rememberLayerBackdrop()
+    val currentEnabled by rememberUpdatedState(enabled)
+    val currentValue by rememberUpdatedState(value.coerceIn(valueRange))
+    val currentOnValueChange by rememberUpdatedState(onValueChange)
+    val currentOnValueChangeFinished by rememberUpdatedState(onValueChangeFinished)
+    var dragValue by remember(valueRange, enabled) {
+        mutableFloatStateOf(value.coerceIn(valueRange))
+    }
+    var dragging by remember(valueRange, enabled) { mutableStateOf(false) }
+    val displayedValue = if (dragging) dragValue else currentValue
+    val updateValue by rememberUpdatedState<(Float) -> Unit> { next ->
+        val target = next.coerceIn(valueRange)
+        val previous = if (dragging) dragValue else currentValue
+        if (dragging) dragValue = target
+        if (target != previous) currentOnValueChange(target)
+    }
+    val progress = {
+        (displayedValue - valueRange.start) / (valueRange.endInclusive - valueRange.start)
+    }
 
     BoxWithConstraints(
         modifier
             .fillMaxWidth()
             .height(44.dp)
-            .progressSemantics(value.fastCoerceIn(valueRange.start, valueRange.endInclusive), valueRange),
+            .progressSemantics(displayedValue, valueRange)
+            .semantics {
+                if (!enabled) disabled()
+                setProgress { requested ->
+                    if (!enabled || !requested.isFinite()) {
+                        false
+                    } else {
+                        val target = requested.coerceIn(valueRange)
+                        if (target == displayedValue) {
+                            false
+                        } else {
+                            updateValue(target)
+                            currentOnValueChangeFinished?.invoke()
+                            true
+                        }
+                    }
+                }
+            },
         contentAlignment = Alignment.CenterStart,
     ) {
         val trackWidth = constraints.maxWidth
         val ltr = LocalLayoutDirection.current == LayoutDirection.Ltr
+        val currentTrackWidth by rememberUpdatedState(trackWidth)
+        val currentLtr by rememberUpdatedState(ltr)
         val scope = rememberCoroutineScope()
         val animation = remember(scope, valueRange, enabled) {
             DampedDragAnimation(
@@ -244,16 +288,21 @@ fun GlassSlider(
                 initialScale = 1f,
                 pressedScale = 1.5f,
                 onDragStarted = {},
-                onDragStopped = { if (enabled) onValueChange(targetValue) },
-                onDrag = { _, dragAmount ->
-                    if (!enabled) return@DampedDragAnimation
-                    val delta = (valueRange.endInclusive - valueRange.start) * dragAmount.x / trackWidth
-                    onValueChange((if (ltr) targetValue + delta else targetValue - delta).coerceIn(valueRange))
-                },
+                onDragStopped = {},
+                onDrag = { _, _ -> },
             )
         }
-        LaunchedEffect(value) {
-            if (animation.targetValue != value) animation.updateValue(value)
+        val updateFromPosition by rememberUpdatedState<(Float) -> Unit> { x ->
+            val fraction = (x / currentTrackWidth.coerceAtLeast(1)).coerceIn(0f, 1f)
+            updateValue(
+                if (currentLtr) lerp(valueRange.start, valueRange.endInclusive, fraction)
+                else lerp(valueRange.endInclusive, valueRange.start, fraction),
+            )
+        }
+        val finishGesture by rememberUpdatedState {
+            if (currentEnabled) currentOnValueChangeFinished?.invoke()
+            dragging = false
+            animation.release()
         }
         val transformedTrackBackdrop = rememberBackdrop(
             backdrop = trackBackdrop,
@@ -302,16 +351,6 @@ fun GlassSlider(
                 Modifier
                     .clip(Capsule())
                     .background(track)
-                    .pointerInput(enabled, valueRange) {
-                        if (!enabled) return@pointerInput
-                        detectTapGestures { position ->
-                            val fraction = position.x / trackWidth
-                            val target = (if (ltr) valueRange.start + (valueRange.endInclusive - valueRange.start) * fraction
-                            else valueRange.endInclusive - (valueRange.endInclusive - valueRange.start) * fraction).coerceIn(valueRange)
-                            animation.animateToValue(target)
-                            onValueChange(target)
-                        }
-                    }
                     .height(6.dp)
                     .fillMaxWidth(),
             )
@@ -322,7 +361,7 @@ fun GlassSlider(
                     .height(6.dp)
                     .layout { measurable, constraints ->
                         val placeable = measurable.measure(constraints)
-                        val width = (constraints.maxWidth * animation.progress).fastRoundToInt()
+                        val width = (constraints.maxWidth * progress()).fastRoundToInt()
                         layout(width, placeable.height) { placeable.place(0, 0) }
                     },
             )
@@ -330,13 +369,52 @@ fun GlassSlider(
         Box(
             Modifier
                 .graphicsLayer {
-                    translationX = (-size.width / 2f + trackWidth * animation.progress)
+                    // Position follows the pointer directly; springs only deform the glass.
+                    translationX = (-size.width / 2f + trackWidth * progress())
                         .fastCoerceIn(-size.width / 4f, trackWidth - size.width * 3f / 4f) * if (ltr) 1f else -1f
                     alpha = if (enabled) 1f else 0.45f
                 }
-                .then(animation.modifier)
                 .then(thumbGlassModifier)
                 .size(width = 40.dp, height = 24.dp),
+        )
+        // Use a stationary input surface. Measuring deltas in the translated thumb's
+        // coordinates subtracts its own movement and makes dragging feel damped.
+        Box(
+            Modifier.fillMaxSize()
+                .pointerInput(enabled, valueRange, animation) {
+                    if (!enabled) return@pointerInput
+                    detectTapGestures(
+                        onPress = {
+                            animation.press()
+                            tryAwaitRelease()
+                            if (!dragging) animation.release()
+                        },
+                        onTap = { position ->
+                            if (currentEnabled) {
+                                updateFromPosition(position.x)
+                                currentOnValueChangeFinished?.invoke()
+                            }
+                        },
+                    )
+                }
+                .pointerInput(enabled, valueRange, animation) {
+                    if (!enabled) return@pointerInput
+                    detectHorizontalDragGestures(
+                        onDragStart = { position ->
+                            if (currentEnabled) {
+                                dragValue = currentValue
+                                dragging = true
+                                animation.press()
+                                updateFromPosition(position.x)
+                            }
+                        },
+                        onDragEnd = { finishGesture() },
+                        onDragCancel = { finishGesture() },
+                        onHorizontalDrag = { change, _ ->
+                            if (currentEnabled) updateFromPosition(change.position.x)
+                        },
+                    )
+                },
         )
     }
 }

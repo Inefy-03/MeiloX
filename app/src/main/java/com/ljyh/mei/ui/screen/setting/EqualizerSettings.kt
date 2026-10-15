@@ -15,6 +15,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -57,17 +61,28 @@ fun EqualizerSettings() {
         .mapNotNull(String::toFloatOrNull)
         .takeIf { it.size == EqualizerBand.entries.size }
         ?: EqualizerPreset.Flat.gains
+    // Follow loaded preferences until edited, then let this screen own its live preview.
+    var previewPreset by remember { mutableStateOf<EqualizerPreset?>(null) }
+    var previewPreamp by remember { mutableStateOf<Float?>(null) }
+    var previewGains by remember { mutableStateOf<List<Float>?>(null) }
 
     fun applyPreset(next: EqualizerPreset) {
+        previewPreset = next
         setPreset(next)
         if (next != EqualizerPreset.Custom) {
+            previewPreamp = next.preamp
+            previewGains = next.gains
             setPreamp(next.preamp)
             setSerializedGains(next.gains.joinToString(","))
         }
     }
 
     fun updateGain(index: Int, value: Float) {
-        val updated = gains.toMutableList().apply { this[index] = value.coerceIn(-12f, 12f) }
+        val updated = (previewGains ?: gains).toMutableList().apply {
+            this[index] = value.coerceIn(-12f, 12f)
+        }
+        previewPreset = EqualizerPreset.Custom
+        previewGains = updated
         setPreset(EqualizerPreset.Custom)
         setSerializedGains(updated.joinToString(","))
     }
@@ -112,7 +127,7 @@ fun EqualizerSettings() {
                     GlassButton(
                         onClick = { applyPreset(item) },
                         enabled = enabled,
-                        emphasis = if (item == preset) GlassEmphasis.Prominent else GlassEmphasis.Regular,
+                        emphasis = if (item == (previewPreset ?: preset)) GlassEmphasis.Prominent else GlassEmphasis.Regular,
                     ) {
                         Text(stringResource(item.labelResource()))
                     }
@@ -122,13 +137,19 @@ fun EqualizerSettings() {
         item(key = "equalizer-bands") {
             IosGroupedList {
                 EqualizerSliderCard(
-                    title = stringResource(R.string.equalizer_preamp), value = preamp, enabled = enabled,
-                    onValueChange = { setPreset(EqualizerPreset.Custom); setPreamp(it) }, valueRange = -12f..6f,
+                    title = stringResource(R.string.equalizer_preamp), value = previewPreamp ?: preamp, enabled = enabled,
+                    onValueChange = {
+                        previewPreset = EqualizerPreset.Custom
+                        previewPreamp = it
+                        setPreset(EqualizerPreset.Custom)
+                        setPreamp(it)
+                    },
+                    valueRange = -12f..6f,
                 )
                 EqualizerBand.entries.forEach { band ->
                     val index = band.ordinal
                     EqualizerSliderCard(
-                        title = stringResource(band.labelResource()), value = gains[index], enabled = enabled,
+                        title = stringResource(band.labelResource()), value = (previewGains ?: gains)[index], enabled = enabled,
                         onValueChange = { updateGain(index, it) }, valueRange = -12f..12f,
                     )
                 }
