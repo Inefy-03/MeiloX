@@ -106,6 +106,7 @@ val MeshLowFreqVolumeKey = floatPreferencesKey("meshLowFreqVolume")
 val MeshSubdivisionKey = intPreferencesKey("meshSubdivision")
 
 val LibraryStyleKey = stringPreferencesKey("libraryStyle")
+val KeepBottomBarExpandedKey = booleanPreferencesKey("appearance.keepBottomBarExpanded")
 val LiquidGlassEnabledKey = booleanPreferencesKey("appearance.liquidGlassEnabled")
 val ReduceTransparencyKey = booleanPreferencesKey("appearance.reduceTransparency")
 

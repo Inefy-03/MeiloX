@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="appearance_interface">Interface</string>
+    <string name="appearance_fixed_bottom_bar">Keep tab bar expanded</string>
+    <string name="appearance_fixed_bottom_bar_description">Keep the bottom tabs expanded while scrolling.</string>
     <string name="appearance_liquid_glass">Liquid Glass</string>
     <string name="appearance_liquid_glass_description">Use light refraction and fluid glass effects. Turn off for frosted glass.</string>
     <string name="appearance_reduce_transparency">Reduce transparency</string>

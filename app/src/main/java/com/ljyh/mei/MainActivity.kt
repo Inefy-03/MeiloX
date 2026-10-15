@@ -138,6 +138,7 @@ import com.ljyh.mei.constants.DownloadsTabEnabledKey
 import com.ljyh.mei.constants.CloudMusicTabEnabledKey
 import com.ljyh.mei.constants.ListeningHistoryTabEnabledKey
 import com.ljyh.mei.constants.NavigationTabOrderKey
+import com.ljyh.mei.constants.KeepBottomBarExpandedKey
 import com.ljyh.mei.constants.LiquidGlassEnabledKey
 import com.ljyh.mei.constants.ReduceTransparencyKey
 import com.ljyh.mei.constants.LastSelectedTabKey
@@ -297,6 +298,7 @@ class MainActivity : ComponentActivity() {
             val recognizeClipboardLinks by rememberPreference(RecognizeClipboardLinksKey, false)
             val navigationPreferences by context.dataStore.data
                 .collectAsState<Preferences, Preferences?>(initial = null)
+            val keepBottomBarExpanded = navigationPreferences?.get(KeepBottomBarExpandedKey) ?: false
             val liquidGlassEnabled = navigationPreferences?.get(LiquidGlassEnabledKey) ?: true
             val reduceTransparency = navigationPreferences?.get(ReduceTransparencyKey) ?: false
             val podcastsEnabled = navigationPreferences?.get(PodcastsEnabledKey) ?: true
@@ -425,6 +427,11 @@ class MainActivity : ComponentActivity() {
 
             }
             var navigationBarVisible by remember { mutableStateOf(true) }
+            val navigationBarExpanded = keepBottomBarExpanded || navigationBarVisible
+            val keepBottomBarExpandedState = rememberUpdatedState(keepBottomBarExpanded)
+            LaunchedEffect(keepBottomBarExpanded) {
+                if (keepBottomBarExpanded) navigationBarVisible = true
+            }
             val scrollPlayerSheet = remember { mutableStateOf<BottomSheetState?>(null) }
             val searchActiveState = rememberUpdatedState(active)
             val nestedScrollConnection = remember {
@@ -434,6 +441,7 @@ class MainActivity : ComponentActivity() {
                         available: Offset,
                         source: NestedScrollSource
                     ): Offset {
+                        if (keepBottomBarExpandedState.value) return Offset.Zero
                         // Read the actual sheet state for every event. Page scrolling remains
                         // unconsumed, but cannot move the mini player's return target mid-flight.
                         val sheet = scrollPlayerSheet.value
@@ -609,11 +617,11 @@ class MainActivity : ComponentActivity() {
                                 !active
                     }
                     // Route visibility must not reset the expanded/compact shape. This keeps a
-                    // MiniNav compact while it fades out, while navigationBarVisible remains the
-                    // only source that changes its shape.
-                    val shouldCompactNavigationBar = !navigationBarVisible
+                    // MiniNav compact while it fades out. The expanded preference overrides
+                    // scrolling without changing which routes can display the navigation bar.
+                    val shouldCompactNavigationBar = !navigationBarExpanded
                     val shouldCompactMiniPlayer =
-                        shouldAllowNavigationBar && !navigationBarVisible
+                        shouldAllowNavigationBar && !navigationBarExpanded
 
 
 
@@ -935,14 +943,14 @@ class MainActivity : ComponentActivity() {
                                                     meiRoute.route,
                                                     bottomInset,
                                                     navigationItems,
-                                                    navigationBarVisible,
+                                                    navigationBarExpanded,
                                                     playerDismissed,
                                                     windowsInsets,
                                                 ) {
                                                     playerAwareWindowInsetsForRoute(
                                                         route = meiRoute.route,
                                                         navigationItems = navigationItems,
-                                                        navigationBarVisible = navigationBarVisible,
+                                                        navigationBarVisible = navigationBarExpanded,
                                                         playerDismissed = playerDismissed,
                                                         windowsInsets = windowsInsets,
                                                         bottomInset = bottomInset,

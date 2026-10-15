@@ -49,6 +49,7 @@ import com.ljyh.mei.constants.OriginalCoverKey
 import com.ljyh.mei.constants.PlayerStyle
 import com.ljyh.mei.constants.LibraryStyle
 import com.ljyh.mei.constants.LibraryStyleKey
+import com.ljyh.mei.constants.KeepBottomBarExpandedKey
 import com.ljyh.mei.constants.LiquidGlassEnabledKey
 import com.ljyh.mei.constants.ReduceTransparencyKey
 import com.ljyh.mei.constants.PlayerKeepScreenOnKey
@@ -91,6 +92,7 @@ fun AppearanceSettings(
     val (playlistStyle, setPlaylistStyle) = rememberEnumPreference(PlaylistCoverStyleKey, PlaylistCoverStyle.Cover)
     val (playlistHeader, setPlaylistHeader) = rememberPreference(PlaylistTrackTableHeaderKey, false)
     val (libraryStyle, setLibraryStyle) = rememberEnumPreference(LibraryStyleKey, LibraryStyle.Default)
+    val (keepBottomBarExpanded, setKeepBottomBarExpanded) = rememberPreference(KeepBottomBarExpandedKey, false)
     val (liquidGlassEnabled, setLiquidGlassEnabled) = rememberPreference(LiquidGlassEnabledKey, true)
     val (reduceTransparency, setReduceTransparency) = rememberPreference(ReduceTransparencyKey, false)
     val (playerStyle, setPlayerStyle) = rememberEnumPreference(PlayerStyleKey, PlayerStyle.AppleMusic)
@@ -141,6 +143,13 @@ fun AppearanceSettings(
         }
         item {
             SettingsGroup(stringResource(R.string.appearance_interface)) {
+                AppearanceToggle(
+                    R.string.appearance_fixed_bottom_bar,
+                    R.string.appearance_fixed_bottom_bar_description,
+                    "rectangle.split.3x1.fill",
+                    keepBottomBarExpanded,
+                    setKeepBottomBarExpanded,
+                )
                 AppearanceToggle(
                     R.string.appearance_liquid_glass,
                     R.string.appearance_liquid_glass_description,
