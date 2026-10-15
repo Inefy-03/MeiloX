@@ -24,7 +24,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.ljyh.mei.R
 import com.ljyh.mei.constants.AccompanimentLyricTextBoldKey
 import com.ljyh.mei.constants.AccentColorKey
@@ -259,12 +258,6 @@ private fun AppearanceLetterSpacing(savedSpacing: Float, setSpacing: (Float) -> 
                     contentDescription = title
                     stateDescription = valueLabel
                 },
-            )
-            Text(
-                stringResource(R.string.appearance_letter_spacing_preview),
-                style = IosTypography.body.copy(letterSpacing = displayedSpacing.sp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 2.dp),
             )
         }
     }
