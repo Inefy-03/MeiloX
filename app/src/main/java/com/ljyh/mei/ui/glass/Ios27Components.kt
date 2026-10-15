@@ -95,6 +95,7 @@ import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.LayerBackdrop
+import com.kyant.backdrop.backdrops.emptyBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
@@ -709,10 +710,15 @@ fun IosContextMenu(
         pivotFractionY = startOrigin.pivotFractionY +
             (0.5f - startOrigin.pivotFractionY) * originProgress,
     )
+    val appearance = LocalGlassAppearance.current
     val childBackdrop = rememberLayerBackdrop()
     // Context menus render in a separate Popup window. Map their sampling coordinates back
     // to the source window so the menu refracts the content physically behind its position.
-    val samplingBackdrop = rememberCrossWindowBackdrop(backdrop)
+    val samplingBackdrop = if (appearance.usesBackdrop) {
+        rememberCrossWindowBackdrop(backdrop)
+    } else {
+        emptyBackdrop()
+    }
     val isLight = !LocalGlassColors.current.isDark
     val elevatedBackground = LocalGlassColors.current.elevatedBackground
     val menuLayerBlock: GraphicsLayerScope.() -> Unit = {
@@ -801,10 +807,12 @@ fun IosContextMenu(
                         .fillMaxSize()
                         .drawBackdrop(
                             backdrop = samplingBackdrop,
-                            exportedBackdrop = childBackdrop,
+                            exportedBackdrop = childBackdrop.takeIf { appearance.usesBackdrop },
                             shape = { RoundedRectangle(radius) },
                             effects = {
-                                blur(if (isLight) 16.dp.toPx() else 12.dp.toPx())
+                                if (appearance.usesBackdrop) {
+                                    blur(if (isLight) 16.dp.toPx() else 12.dp.toPx())
+                                }
                             },
                             highlight = {
                                 Highlight.Default.copy(
@@ -824,7 +832,11 @@ fun IosContextMenu(
                             innerShadow = { InnerShadow(radius = 8.dp, alpha = 0.10f * progress) },
                             layerBlock = menuLayerBlock,
                             onDrawSurface = {
-                                drawRect(elevatedBackground.copy(alpha = 0.70f * progress))
+                                drawRect(
+                                    elevatedBackground.copy(
+                                        alpha = if (appearance.usesBackdrop) 0.70f * progress else 1f,
+                                    ),
+                                )
                             },
                         )
                         .then(interactiveHighlight.modifier)
@@ -1379,6 +1391,7 @@ fun IosAlertSurface(
     content: @Composable ColumnScope.() -> Unit = {},
 ) {
     val colors = LocalGlassColors.current
+    val appearance = LocalGlassAppearance.current
     val light = !colors.isDark
     val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
     SideEffect {
@@ -1388,7 +1401,11 @@ fun IosAlertSurface(
     val interactiveHighlight = remember(animationScope) {
         InteractiveHighlight(animationScope = animationScope)
     }
-    val samplingBackdrop = rememberCrossWindowBackdrop(backdrop)
+    val samplingBackdrop = if (appearance.usesBackdrop) {
+        rememberCrossWindowBackdrop(backdrop)
+    } else {
+        emptyBackdrop()
+    }
     val alertShape = ContinuousRoundedRectangle(34.dp)
     val alertBackgroundAlpha = if (light) 0.72f else 0.64f
     val alertLayerBlock: GraphicsLayerScope.() -> Unit = {
@@ -1411,14 +1428,16 @@ fun IosAlertSurface(
                     backdrop = samplingBackdrop,
                     shape = { alertShape },
                     effects = {
-                        blur(if (light) 16.dp.toPx() else 8.dp.toPx())
+                        if (appearance.usesBackdrop) {
+                            blur(if (light) 16.dp.toPx() else 8.dp.toPx())
+                        }
                     },
                     highlight = { Highlight.Plain },
                     layerBlock = alertLayerBlock,
                     onDrawSurface = {
-                        // Keep the Figma background-blend stack over the sampled screen;
-                        // do not add an opaque elevated surface on top of the backdrop.
-                        if (light) {
+                        if (!appearance.usesBackdrop) {
+                            drawRect(colors.container.copy(alpha = 1f))
+                        } else if (light) {
                             drawRect(
                                 Color.White.copy(alpha = 0.70f * alertBackgroundAlpha),
                                 blendMode = BlendMode.Lighten,
@@ -1664,6 +1683,7 @@ fun IosSheetSurface(
     content: @Composable BoxScope.() -> Unit,
 ) {
     val colors = LocalGlassColors.current
+    val appearance = LocalGlassAppearance.current
     val isLight = !colors.isDark
     val animationScope = rememberCoroutineScope()
     val activeInteractiveHighlight = interactiveHighlight ?: remember(animationScope) {
@@ -1682,8 +1702,12 @@ fun IosSheetSurface(
     // Sheet surfaces render inside dialog windows (ModalBottomSheet); the shared backdrop
     // lives in the app window, so sample it with window-space coordinates. The library's
     // localPositionOf mapping cannot cross compose owners and silently sampled nothing.
-    val samplingBackdrop = rememberCrossWindowBackdrop(backdrop)
-    val backdropRenderer = rememberSheetBackdropRenderer(samplingBackdrop, if (isLight) 16.dp else 12.dp)
+    val backdropRenderer = if (appearance.usesBackdrop) {
+        val samplingBackdrop = rememberCrossWindowBackdrop(backdrop)
+        rememberSheetBackdropRenderer(samplingBackdrop, if (isLight) 16.dp else 12.dp)
+    } else {
+        emptyBackdrop()
+    }
     Box(
         modifier
             .fillMaxWidth()
@@ -1702,9 +1726,13 @@ fun IosSheetSurface(
                     layerBlock = sheetLayerBlock,
                     onDrawSurface = {
                         drawRect(
-                            colors.elevatedBackground.copy(alpha = if (isLight) 0.72f else 0.54f),
+                            colors.elevatedBackground.copy(
+                                alpha = if (!appearance.usesBackdrop) 1f else if (isLight) 0.72f else 0.54f,
+                            ),
                         )
-                        drawRect(Color.White.copy(alpha = if (isLight) 0.12f else 0.04f))
+                        if (appearance.usesBackdrop) {
+                            drawRect(Color.White.copy(alpha = if (isLight) 0.12f else 0.04f))
+                        }
                     },
                 )
                 .then(activeInteractiveHighlight.modifier)
@@ -1713,7 +1741,8 @@ fun IosSheetSurface(
                 CompositionLocalProvider(
                     LocalContentColor provides colors.content,
                     LocalGlassContentColor provides colors.content,
-                    LocalGroupedListBackgroundAlpha provides SheetGroupedListBackgroundAlpha,
+                    LocalGroupedListBackgroundAlpha provides
+                        if (appearance.usesBackdrop) SheetGroupedListBackgroundAlpha else 1f,
                 ) {
                     content()
                 }

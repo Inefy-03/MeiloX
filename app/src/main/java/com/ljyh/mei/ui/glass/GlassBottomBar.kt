@@ -60,6 +60,7 @@ import androidx.compose.ui.util.fastCoerceIn
 import androidx.compose.ui.util.fastRoundToInt
 import androidx.compose.ui.util.lerp
 import com.kyant.backdrop.Backdrop
+import com.kyant.backdrop.backdrops.emptyBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
@@ -169,6 +170,7 @@ fun <T> GlassBottomBar(
     val selectedIndex = tabItems.indexOfFirst { it.key == selectedKey }.takeIf { it >= 0 } ?: 0
     val selectedItem = tabItems[selectedIndex]
     val colors = LocalGlassColors.current
+    val appearance = LocalGlassAppearance.current
     val isLight = !colors.isDark
     val containerColor = colors.container
     val tabsBackdrop = rememberLayerBackdrop()
@@ -387,6 +389,7 @@ fun <T> GlassBottomBar(
             containerColor,
             pressProgressState,
             pressLayerBlock,
+            appearance,
         ) {
             Modifier.navigationGlassBackground(
                 backdrop = backdrop,
@@ -394,6 +397,7 @@ fun <T> GlassBottomBar(
                 containerColor = containerColor,
                 pressProgressState = pressProgressState,
                 layerBlock = pressLayerBlock,
+                appearance = appearance,
             )
         }
         val hiddenLayerBackdropModifier = remember(tabsBackdrop) {
@@ -401,7 +405,7 @@ fun <T> GlassBottomBar(
         }
         val morphingHiddenGlass = rememberMorphingNavigationGlass(
             backdrop = backdrop,
-            active = morphing,
+            active = morphing && appearance.usesRefraction,
             shape = Capsule(),
             tint = containerColor,
             pressProgress = { pressProgressState.value },
@@ -516,20 +520,23 @@ fun <T> GlassBottomBar(
                 containerColor,
                 isLight,
                 indicatorBackdropLayerBlock,
+                appearance,
             ) {
                 Modifier
                     .drawBackdrop(
-                        backdrop = indicatorBackdrop,
+                        backdrop = if (appearance.usesRefraction) indicatorBackdrop else emptyBackdrop(),
                         shape = { Capsule() },
                         effects = {
                             val press = pressProgressState.value
                             val opticalIntensity = press * expandedIndicatorVisibilityState.value
-                            lens(
-                                14.dp.toPx() * opticalIntensity,
-                                22.dp.toPx() * opticalIntensity,
-                                depthEffect = opticalIntensity > 0.01f,
-                                chromaticAberration = true,
-                            )
+                            if (appearance.usesRefraction) {
+                                lens(
+                                    14.dp.toPx() * opticalIntensity,
+                                    22.dp.toPx() * opticalIntensity,
+                                    depthEffect = opticalIntensity > 0.01f,
+                                    chromaticAberration = true,
+                                )
+                            }
                         },
                         highlight = {
                             Highlight.Default.copy(
@@ -565,7 +572,8 @@ fun <T> GlassBottomBar(
                             )
                             drawRect(
                                 indicatorColor,
-                                alpha = (1f - press) * (1f - compactState.value),
+                                alpha = (if (appearance.usesRefraction) 1f - press else 1f) *
+                                    (1f - compactState.value),
                             )
                             drawRect(
                                 Color.Black.copy(
@@ -627,7 +635,7 @@ fun <T> GlassBottomBar(
             }
         }
 
-        if (!indicatorSettled) {
+        if (!indicatorSettled && appearance.usesRefraction) {
             CompositionLocalProvider(LocalLiquidTabScale provides lensSourceTabContentScale) {
                 Row(
                     modifier = Modifier

@@ -352,6 +352,7 @@ fun IosPinnedPage(
 ) {
     val pageBackdrop = rememberLayerBackdrop()
     val colors = LocalGlassColors.current
+    val appearance = LocalGlassAppearance.current
     val pageBackground = backgroundColor ?: colors.groupedBackground
     val statusBarHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val toolbarHeight = statusBarHeight + 62.dp
@@ -369,7 +370,7 @@ fun IosPinnedPage(
             Box(
                 Modifier
                     .fillMaxSize()
-                    .layerBackdrop(pageBackdrop)
+                    .then(if (appearance.usesBackdrop) Modifier.layerBackdrop(pageBackdrop) else Modifier)
                     .then(
                         if (backgroundBrush != null) Modifier.background(backgroundBrush)
                         else Modifier.background(pageBackground),
@@ -380,20 +381,26 @@ fun IosPinnedPage(
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .height(toolbarHeight + 34.dp)
+                    .height(toolbarHeight + if (appearance.usesBackdrop) 34.dp else 0.dp)
                     .align(Alignment.TopCenter)
                     .graphicsLayer {
-                        alpha = topBarBlurProgress.coerceIn(0f, 1f)
+                        alpha = if (appearance.usesBackdrop) topBarBlurProgress.coerceIn(0f, 1f) else 1f
                     }
-                    .drawPlainBackdrop(
-                        backdrop = pageBackdrop,
-                        shape = { RectangleShape },
-                        effects = {
-                            topBarProgressiveBlur(
-                                maxRadius = 10.dp.toPx(),
-                                tint = pageBackground,
-                                tintIntensity = 0.78f,
+                    .then(
+                        if (appearance.usesBackdrop) {
+                            Modifier.drawPlainBackdrop(
+                                backdrop = pageBackdrop,
+                                shape = { RectangleShape },
+                                effects = {
+                                    topBarProgressiveBlur(
+                                        maxRadius = 10.dp.toPx(),
+                                        tint = pageBackground,
+                                        tintIntensity = 0.78f,
+                                    )
+                                },
                             )
+                        } else {
+                            Modifier.background(pageBackground.copy(alpha = 1f))
                         },
                     ),
             )

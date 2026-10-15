@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="appearance_interface">介面</string>
+    <string name="appearance_liquid_glass">液態玻璃</string>
+    <string name="appearance_liquid_glass_description">使用光線折射和流動玻璃效果，關閉後顯示一般毛玻璃。</string>
+    <string name="appearance_reduce_transparency">降低透明度</string>
+    <string name="appearance_reduce_transparency_description">使用不透明背景，讓控制項和文字更清晰。</string>
+</resources>

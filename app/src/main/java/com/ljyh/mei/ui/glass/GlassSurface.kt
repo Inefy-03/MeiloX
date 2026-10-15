@@ -384,21 +384,24 @@ internal fun Modifier.navigationGlassBackground(
     highlightAngle: Float = 90f,
     sampleBackdrop: Boolean = true,
     layerBlock: (GraphicsLayerScope.() -> Unit)? = null,
+    appearance: GlassAppearance = GlassAppearance(),
 ): Modifier = this
     .navigationGlassBoxShadow(shape, GlassBoxShadowAlpha, layerBlock)
     .drawBackdrop(
-        backdrop = backdrop,
+        backdrop = if (sampleBackdrop && appearance.usesBackdrop) backdrop else emptyBackdrop(),
         shape = shape,
         effects = {
-            if (sampleBackdrop) {
+            if (sampleBackdrop && appearance.usesBackdrop) {
                 vibrancy()
                 blur(2.dp.toPx())
-                lens(
-                    refractionHeight = 10.dp.toPx(),
-                    refractionAmount = 24.dp.toPx(),
-                    depthEffect = true,
-                    chromaticAberration = true,
-                )
+                if (appearance.usesRefraction) {
+                    lens(
+                        refractionHeight = 10.dp.toPx(),
+                        refractionAmount = 24.dp.toPx(),
+                        depthEffect = true,
+                        chromaticAberration = true,
+                    )
+                }
             }
         },
         highlight = {
@@ -419,7 +422,9 @@ internal fun Modifier.navigationGlassBackground(
         innerShadow = null,
         layerBlock = layerBlock,
         onDrawSurface = {
-            if (surfaceOverlay != null) {
+            if (appearance.reduceTransparency) {
+                drawRect(containerColor.copy(alpha = 1f))
+            } else if (surfaceOverlay != null) {
                 surfaceOverlay()
             } else {
                 drawRect(
@@ -457,6 +462,7 @@ fun GlassSurface(
     content: @Composable BoxScope.() -> Unit,
 ) {
     val colors = LocalGlassColors.current
+    val appearance = LocalGlassAppearance.current
     val isLight = !colors.isDark
     val brightness = LocalGlassSurfaceBrightness.current.coerceIn(0f, 1f)
     val animationScope = rememberCoroutineScope()
@@ -498,7 +504,7 @@ fun GlassSurface(
     // drag physics without replaying or refracting the content behind them. Keep an empty
     // backdrop for that mode so the button remains a glass surface without lens/blur
     // sampling of the player window.
-    val surfaceBackdrop = if (sampleBackdrop) backdrop else emptyBackdrop()
+    val surfaceBackdrop = if (sampleBackdrop && appearance.usesBackdrop) backdrop else emptyBackdrop()
     val morphing = remember(morphProgress) {
         derivedStateOf {
             morphProgress?.value?.let { it != 0f && it != 1f } == true
@@ -536,6 +542,7 @@ fun GlassSurface(
             pressProgressState,
             sampleBackdrop,
             dragScaleLayerBlock,
+            appearance,
         ) {
             Modifier.navigationGlassBackground(
                 backdrop = surfaceBackdrop,
@@ -550,6 +557,7 @@ fun GlassSurface(
                 pressProgressState = pressProgressState,
                 sampleBackdrop = sampleBackdrop,
                 layerBlock = dragScaleLayerBlock,
+                appearance = appearance,
             )
         }
     } else {
@@ -568,21 +576,24 @@ fun GlassSurface(
             surfaceColor,
             sampleBackdrop,
             dragScaleLayerBlock,
+            appearance,
         ) {
             Modifier.drawBackdrop(
                 backdrop = surfaceBackdrop,
                 shape = shapeProvider,
                 effects = {
-                    if (sampleBackdrop) {
+                    if (sampleBackdrop && appearance.usesBackdrop) {
                         val progress = interactiveHighlight.pressProgress
                         vibrancy()
                         blur(2.dp.toPx())
-                        lens(
-                            refractionHeight = refractionHeight.toPx(),
-                            refractionAmount = refractionAmount.toPx(),
-                            depthEffect = progress > 0.01f,
-                            chromaticAberration = true,
-                        )
+                        if (appearance.usesRefraction) {
+                            lens(
+                                refractionHeight = refractionHeight.toPx(),
+                                refractionAmount = refractionAmount.toPx(),
+                                depthEffect = progress > 0.01f,
+                                chromaticAberration = true,
+                            )
+                        }
                     }
                 },
                 highlight = {
@@ -610,13 +621,17 @@ fun GlassSurface(
                 layerBlock = dragScaleLayerBlock,
                 exportedBackdrop = exportedBackdrop,
                 onDrawSurface = {
-                    drawGlassSurfaceColor(
-                        surfaceColor = surfaceColor,
-                        prominent = emphasis == GlassEmphasis.Prominent,
-                        isLight = isLight,
-                        brightness = brightness,
-                        enabled = enabled,
-                    )
+                    if (appearance.reduceTransparency) {
+                        drawRect(surfaceColor.copy(alpha = 1f))
+                    } else {
+                        drawGlassSurfaceColor(
+                            surfaceColor = surfaceColor,
+                            prominent = emphasis == GlassEmphasis.Prominent,
+                            isLight = isLight,
+                            brightness = brightness,
+                            enabled = enabled,
+                        )
+                    }
                 },
             )
         }

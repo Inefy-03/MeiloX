@@ -21,6 +21,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
@@ -48,6 +49,8 @@ import com.ljyh.mei.constants.OriginalCoverKey
 import com.ljyh.mei.constants.PlayerStyle
 import com.ljyh.mei.constants.LibraryStyle
 import com.ljyh.mei.constants.LibraryStyleKey
+import com.ljyh.mei.constants.LiquidGlassEnabledKey
+import com.ljyh.mei.constants.ReduceTransparencyKey
 import com.ljyh.mei.constants.PlayerKeepScreenOnKey
 import com.ljyh.mei.constants.PlayerStyleKey
 import com.ljyh.mei.constants.PlaylistCoverStyle
@@ -88,6 +91,8 @@ fun AppearanceSettings(
     val (playlistStyle, setPlaylistStyle) = rememberEnumPreference(PlaylistCoverStyleKey, PlaylistCoverStyle.Cover)
     val (playlistHeader, setPlaylistHeader) = rememberPreference(PlaylistTrackTableHeaderKey, false)
     val (libraryStyle, setLibraryStyle) = rememberEnumPreference(LibraryStyleKey, LibraryStyle.Default)
+    val (liquidGlassEnabled, setLiquidGlassEnabled) = rememberPreference(LiquidGlassEnabledKey, true)
+    val (reduceTransparency, setReduceTransparency) = rememberPreference(ReduceTransparencyKey, false)
     val (playerStyle, setPlayerStyle) = rememberEnumPreference(PlayerStyleKey, PlayerStyle.AppleMusic)
     val (keepScreenOn, setKeepScreenOn) = rememberPreference(PlayerKeepScreenOnKey, false)
     val (originalCover, setOriginalCover) = rememberPreference(OriginalCoverKey, false)
@@ -132,6 +137,25 @@ fun AppearanceSettings(
                     enabled = !dynamicTheme,
                 )
                 AppearanceLetterSpacing(letterSpacing, setLetterSpacing)
+            }
+        }
+        item {
+            SettingsGroup(stringResource(R.string.appearance_interface)) {
+                AppearanceToggle(
+                    R.string.appearance_liquid_glass,
+                    R.string.appearance_liquid_glass_description,
+                    "square.on.square",
+                    liquidGlassEnabled,
+                    setLiquidGlassEnabled,
+                    enabled = !reduceTransparency,
+                )
+                AppearanceToggle(
+                    R.string.appearance_reduce_transparency,
+                    R.string.appearance_reduce_transparency_description,
+                    "circle.lefthalf.filled",
+                    reduceTransparency,
+                    setReduceTransparency,
+                )
             }
         }
         item {
@@ -270,9 +294,16 @@ private fun AppearanceToggle(
     systemName: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
+    enabled: Boolean = true,
 ) {
-    GlassCard(Modifier.fillMaxWidth(), onClick = { onCheckedChange(!checked) }) {
-        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+    GlassCard(
+        Modifier.fillMaxWidth().semantics { if (!enabled) disabled() },
+        onClick = if (enabled) ({ onCheckedChange(!checked) }) else null,
+    ) {
+        Row(
+            Modifier.fillMaxWidth().alpha(if (enabled) 1f else 0.38f).padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             SfIcon(systemName, null)
             Column(Modifier.weight(1f).padding(horizontal = 13.dp)) {
                 Text(stringResource(titleRes))
@@ -280,7 +311,7 @@ private fun AppearanceToggle(
                     Text(stringResource(it), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            GlassToggle(checked, onCheckedChange)
+            GlassToggle(checked, onCheckedChange, enabled = enabled)
         }
     }
 }

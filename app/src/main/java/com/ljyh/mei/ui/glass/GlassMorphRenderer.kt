@@ -57,10 +57,11 @@ internal fun rememberGlassMorphRenderer(
     renderScale: Float = DefaultGlassRenderScale,
 ): GlassMorphRenderer {
     val density = LocalDensity.current
+    val appearance = LocalGlassAppearance.current
     val source = rememberGraphicsLayer()
     val refracted = rememberGraphicsLayer()
-    val renderer = remember(backdrop, density, blurRadius, renderScale, source, refracted) {
-        GlassMorphRenderer(backdrop, density, blurRadius, renderScale, source, refracted)
+    val renderer = remember(backdrop, density, blurRadius, renderScale, source, refracted, appearance) {
+        GlassMorphRenderer(backdrop, density, blurRadius, renderScale, source, refracted, appearance)
     }
     DisposableEffect(renderer, active) {
         // Keep shaders/layers across endpoints, but never reuse an old capture when a new
@@ -79,19 +80,20 @@ internal class GlassMorphRenderer(
     private val renderScale: Float,
     private val source: GraphicsLayer,
     private val refracted: GraphicsLayer,
+    private val appearance: GlassAppearance,
 ) {
-    private val shader = RuntimeShader(TransitionRefractionShader)
+    private val shader = if (appearance.usesRefraction) RuntimeShader(TransitionRefractionShader) else null
     private val highlight = RuntimeShader(TransitionHighlightShader)
     private val highlightBrush = ShaderBrush(highlight)
     private var recordedViewport: Rect? = null
-    private val sourceEffect = run {
+    private val sourceEffect = if (appearance.usesBackdrop) run {
         val color = RenderEffect.createColorFilterEffect(
             ColorMatrixColorFilter(ColorMatrix().apply { setSaturation(1.5f) }),
         )
         val blur = with(density) { blurRadius.toPx() } * renderScale
         RenderEffect.createBlurEffect(blur, blur, color, Shader.TileMode.CLAMP)
             .asComposeRenderEffect()
-    }
+    } else null
 
     fun invalidateRecording() {
         recordedViewport = null
@@ -124,7 +126,7 @@ internal class GlassMorphRenderer(
             translate(bounds.topLeft)
         }
         val sourceOffset = origin - viewport.topLeft
-        if (recordedViewport != viewport) {
+        if (appearance.usesBackdrop && recordedViewport != viewport) {
             val bufferSize = IntSize(
                 ceil(viewport.width * renderScale).toInt(),
                 ceil(viewport.height * renderScale).toInt(),
@@ -158,19 +160,20 @@ internal class GlassMorphRenderer(
             refracted.record(bufferSize) { drawLayer(source) }
             recordedViewport = viewport
         }
-        val sampleBounds = Rect(
-            sourceOffset.x + bounds.left * sampleScale.x,
-            sourceOffset.y + bounds.top * sampleScale.y,
-            sourceOffset.x + bounds.right * sampleScale.x,
-            sourceOffset.y + bounds.bottom * sampleScale.y,
-        )
-        shader.setFloatUniform("center", sampleBounds.center.x * renderScale, sampleBounds.center.y * renderScale)
-        shader.setFloatUniform("halfSize", sampleBounds.width * renderScale / 2f, sampleBounds.height * renderScale / 2f)
-        shader.setFloatUniform("radius", radius * minOf(sampleScale.x, sampleScale.y) * renderScale)
-        shader.setFloatUniform("height", refractionHeight.toPx() * renderScale)
-        shader.setFloatUniform("amount", -refractionAmount.toPx() * renderScale)
-        refracted.renderEffect = RenderEffect.createRuntimeShaderEffect(shader, "content")
-            .asComposeRenderEffect()
+        refracted.renderEffect = if (shader != null) {
+            val sampleBounds = Rect(
+                sourceOffset.x + bounds.left * sampleScale.x,
+                sourceOffset.y + bounds.top * sampleScale.y,
+                sourceOffset.x + bounds.right * sampleScale.x,
+                sourceOffset.y + bounds.bottom * sampleScale.y,
+            )
+            shader.setFloatUniform("center", sampleBounds.center.x * renderScale, sampleBounds.center.y * renderScale)
+            shader.setFloatUniform("halfSize", sampleBounds.width * renderScale / 2f, sampleBounds.height * renderScale / 2f)
+            shader.setFloatUniform("radius", radius * minOf(sampleScale.x, sampleScale.y) * renderScale)
+            shader.setFloatUniform("height", refractionHeight.toPx() * renderScale)
+            shader.setFloatUniform("amount", -refractionAmount.toPx() * renderScale)
+            RenderEffect.createRuntimeShaderEffect(shader, "content").asComposeRenderEffect()
+        } else null
 
         if (navigationOutline) {
             val sideExpansion = 1.4.dp.toPx()
@@ -186,12 +189,19 @@ internal class GlassMorphRenderer(
         highlight.setFloatUniform("radius", radius)
         highlight.setFloatUniform("opacity", highlightAlpha)
         clipGlassShape(bounds, radius, shape, path) {
-            withTransform({
-                scale(1f / sampleScale.x, 1f / sampleScale.y, Offset.Zero)
-                translate(-sourceOffset.x, -sourceOffset.y)
-                scale(1f / renderScale, 1f / renderScale, Offset.Zero)
-            }) { drawLayer(refracted) }
-            drawRect(tint.copy(alpha = (tint.alpha * tintMultiplier).coerceIn(0f, 1f)))
+            if (appearance.usesBackdrop) {
+                withTransform({
+                    scale(1f / sampleScale.x, 1f / sampleScale.y, Offset.Zero)
+                    translate(-sourceOffset.x, -sourceOffset.y)
+                    scale(1f / renderScale, 1f / renderScale, Offset.Zero)
+                }) { drawLayer(refracted) }
+            }
+            drawRect(
+                tint.copy(
+                    alpha = if (appearance.reduceTransparency) 1f
+                        else (tint.alpha * tintMultiplier).coerceIn(0f, 1f),
+                ),
+            )
             drawPath(
                 path,
                 highlightBrush,

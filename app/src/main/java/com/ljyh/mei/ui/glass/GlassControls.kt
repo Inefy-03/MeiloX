@@ -40,6 +40,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp as colorLerp
@@ -60,6 +61,7 @@ import androidx.compose.ui.util.fastCoerceIn
 import androidx.compose.ui.util.fastRoundToInt
 import androidx.compose.ui.util.lerp
 import com.kyant.backdrop.Backdrop
+import com.kyant.backdrop.backdrops.emptyBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberBackdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
@@ -89,14 +91,23 @@ fun GlassToggle(
     backdrop: Backdrop = LocalGlassBackdrop.current,
 ) {
     val colors = LocalGlassColors.current
+    val appearance = LocalGlassAppearance.current
     val light = !colors.isDark
     val accent = colors.accent
-    val track = if (light) Color(0xFF787878).copy(alpha = 0.20f)
-    else Color(0xFF787880).copy(alpha = 0.36f)
+    val track = (if (light) {
+        Color(0xFF787878).copy(alpha = 0.20f)
+    } else {
+        Color(0xFF787880).copy(alpha = 0.36f)
+    }).let {
+        if (appearance.reduceTransparency) it.compositeOver(colors.elevatedBackground) else it
+    }
     val density = LocalDensity.current
     val ltr = LocalLayoutDirection.current == LayoutDirection.Ltr
     val travelPx = with(density) { 20.dp.toPx() }
     val scope = rememberCoroutineScope()
+    val currentEnabled by rememberUpdatedState(enabled)
+    val currentChecked by rememberUpdatedState(checked)
+    val currentOnCheckedChange by rememberUpdatedState(onCheckedChange)
     var didDrag by remember { mutableStateOf(false) }
     var fraction by remember { mutableFloatStateOf(if (checked) 1f else 0f) }
     val animation = remember(scope, enabled) {
@@ -109,15 +120,15 @@ fun GlassToggle(
             pressedScale = 1.5f,
             onDragStarted = {},
             onDragStopped = {
-                if (!enabled) return@DampedDragAnimation
+                if (!currentEnabled) return@DampedDragAnimation
                 fraction = if (didDrag) {
                     if (targetValue >= 0.5f) 1f else 0f
-                } else if (checked) 0f else 1f
+                } else if (currentChecked) 0f else 1f
                 didDrag = false
-                onCheckedChange(fraction == 1f)
+                currentOnCheckedChange(fraction == 1f)
             },
             onDrag = { _, dragAmount ->
-                if (!enabled) return@DampedDragAnimation
+                if (!currentEnabled) return@DampedDragAnimation
                 didDrag = didDrag || dragAmount.x != 0f
                 val delta = dragAmount.x / travelPx
                 fraction = if (ltr) (fraction + delta).fastCoerceIn(0f, 1f)
@@ -128,7 +139,8 @@ fun GlassToggle(
     LaunchedEffect(animation) {
         snapshotFlow { fraction }.collectLatest(animation::updateValue)
     }
-    LaunchedEffect(checked) {
+    LaunchedEffect(checked, enabled, animation) {
+        didDrag = false
         val target = if (checked) 1f else 0f
         if (target != fraction) {
             fraction = target
@@ -147,14 +159,18 @@ fun GlassToggle(
         },
     )
     val thumbBackdrop = rememberCombinedBackdrop(backdrop, transformedTrackBackdrop)
-    val thumbGlassModifier = remember(thumbBackdrop, animation, enabled) {
+    val thumbGlassModifier = remember(thumbBackdrop, animation, enabled, appearance) {
         Modifier.drawBackdrop(
-            backdrop = thumbBackdrop,
+            backdrop = if (appearance.usesBackdrop) thumbBackdrop else emptyBackdrop(),
             shape = { Capsule() },
             effects = {
-                val p = animation.pressProgress
-                blur(8.dp.toPx() * (1f - p))
-                lens(5.dp.toPx() * p, 10.dp.toPx() * p, chromaticAberration = true)
+                if (appearance.usesBackdrop) {
+                    val p = animation.pressProgress
+                    blur(8.dp.toPx() * if (appearance.usesRefraction) 1f - p else 1f)
+                    if (appearance.usesRefraction) {
+                        lens(5.dp.toPx() * p, 10.dp.toPx() * p, chromaticAberration = true)
+                    }
+                }
             },
             highlight = {
                 Highlight.Ambient.copy(
@@ -179,7 +195,8 @@ fun GlassToggle(
                 alpha = if (enabled) 1f else 0.45f
             },
             onDrawSurface = {
-                drawRect(Color.White.copy(alpha = 1f - animation.pressProgress))
+                val alpha = if (appearance.reduceTransparency) 1f else 1f - animation.pressProgress
+                drawRect(Color.White.copy(alpha = alpha))
             },
         )
     }
@@ -187,12 +204,12 @@ fun GlassToggle(
         modifier = modifier
             .size(width = 64.dp, height = 28.dp)
             .semantics { role = Role.Switch }
-            .then(animation.modifier),
+            .then(if (enabled) animation.modifier else Modifier),
         contentAlignment = Alignment.CenterStart,
     ) {
         Box(
             Modifier
-                .layerBackdrop(trackBackdrop)
+                .then(if (appearance.usesBackdrop) Modifier.layerBackdrop(trackBackdrop) else Modifier)
                 .clip(Capsule())
                 .drawBehind { drawRect(colorLerp(track, accent, animation.value)) }
                 .size(width = 64.dp, height = 28.dp),
@@ -226,10 +243,16 @@ fun GlassSlider(
 ) {
     require(valueRange.start < valueRange.endInclusive)
     val colors = LocalGlassColors.current
+    val appearance = LocalGlassAppearance.current
     val light = !colors.isDark
     val accent = colors.accent
-    val track = if (light) Color(0xFF787878).copy(alpha = 0.20f)
-    else Color(0xFF787880).copy(alpha = 0.36f)
+    val track = (if (light) {
+        Color(0xFF787878).copy(alpha = 0.20f)
+    } else {
+        Color(0xFF787880).copy(alpha = 0.36f)
+    }).let {
+        if (appearance.reduceTransparency) it.compositeOver(colors.elevatedBackground) else it
+    }
     val trackBackdrop = rememberLayerBackdrop()
     val currentEnabled by rememberUpdatedState(enabled)
     val currentValue by rememberUpdatedState(value.coerceIn(valueRange))
@@ -315,14 +338,18 @@ fun GlassSlider(
             },
         )
         val thumbBackdrop = rememberCombinedBackdrop(backdrop, transformedTrackBackdrop)
-        val thumbGlassModifier = remember(thumbBackdrop, animation) {
+        val thumbGlassModifier = remember(thumbBackdrop, animation, appearance) {
             Modifier.drawBackdrop(
-                backdrop = thumbBackdrop,
+                backdrop = if (appearance.usesBackdrop) thumbBackdrop else emptyBackdrop(),
                 shape = { Capsule() },
                 effects = {
-                    val p = animation.pressProgress
-                    blur(8.dp.toPx() * (1f - p))
-                    lens(10.dp.toPx() * p, 14.dp.toPx() * p, chromaticAberration = true)
+                    if (appearance.usesBackdrop) {
+                        val p = animation.pressProgress
+                        blur(8.dp.toPx() * if (appearance.usesRefraction) 1f - p else 1f)
+                        if (appearance.usesRefraction) {
+                            lens(10.dp.toPx() * p, 14.dp.toPx() * p, chromaticAberration = true)
+                        }
+                    }
                 },
                 highlight = {
                     Highlight.Ambient.copy(
@@ -343,11 +370,15 @@ fun GlassSlider(
                     scaleY = animation.scaleY
                 },
                 onDrawSurface = {
-                    drawRect(Color.White.copy(alpha = 1f - animation.pressProgress))
+                    val alpha = if (appearance.reduceTransparency) 1f else 1f - animation.pressProgress
+                    drawRect(Color.White.copy(alpha = alpha))
                 },
             )
         }
-        Box(Modifier.layerBackdrop(trackBackdrop).fillMaxWidth()) {
+        Box(
+            Modifier.then(if (appearance.usesBackdrop) Modifier.layerBackdrop(trackBackdrop) else Modifier)
+                .fillMaxWidth(),
+        ) {
             Box(
                 Modifier
                     .clip(Capsule())
@@ -483,6 +514,7 @@ fun <T> GlassSegmentedControl(
 ) {
     require(items.isNotEmpty())
     val colors = LocalGlassColors.current
+    val appearance = LocalGlassAppearance.current
     val isLight = !colors.isDark
     val selectedIndex = items.indexOfFirst { it.first == selected }.coerceAtLeast(0)
     val currentItems by rememberUpdatedState(items)
@@ -491,7 +523,9 @@ fun <T> GlassSegmentedControl(
     val tabsBackdrop = rememberLayerBackdrop()
     val indicatorBackdrop = rememberCombinedBackdrop(backdrop, tabsBackdrop)
     val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
-    val trackColor = colors.segmentedControlBackground
+    val trackColor = colors.segmentedControlBackground.let {
+        if (appearance.reduceTransparency) it.compositeOver(colors.elevatedBackground) else it
+    }
 
     // Same three-layer structure as LiquidBottomTabs:
     // visible tabs -> invisible exported tabs with labels -> movable combined-backdrop lens.
@@ -540,37 +574,43 @@ fun <T> GlassSegmentedControl(
                 },
             )
         }
-        val hiddenGlassModifier = remember(backdrop, animation, trackColor) {
+        val hiddenGlassModifier = remember(backdrop, animation, trackColor, appearance) {
             Modifier.drawBackdrop(
-                backdrop = backdrop,
+                backdrop = if (appearance.usesBackdrop) backdrop else emptyBackdrop(),
                 shape = { Capsule() },
                 effects = {
-                    val press = animation.pressProgress
-                    vibrancy()
-                    blur(2.dp.toPx())
-                    lens(
-                        8.dp.toPx() * press,
-                        16.dp.toPx() * press,
-                        depthEffect = press > 0.01f,
-                        chromaticAberration = true,
-                    )
+                    if (appearance.usesBackdrop) {
+                        val press = animation.pressProgress
+                        vibrancy()
+                        blur(2.dp.toPx())
+                        if (appearance.usesRefraction) {
+                            lens(
+                                8.dp.toPx() * press,
+                                16.dp.toPx() * press,
+                                depthEffect = press > 0.01f,
+                                chromaticAberration = true,
+                            )
+                        }
+                    }
                 },
                 highlight = { Highlight.Default.copy(alpha = animation.pressProgress) },
                 onDrawSurface = { drawRect(trackColor) },
             )
         }
-        val indicatorGlassModifier = remember(indicatorBackdrop, animation) {
-            Modifier.drawBackdrop(
+        val indicatorGlassModifier = remember(indicatorBackdrop, animation, appearance) {
+            if (!appearance.usesBackdrop) Modifier else Modifier.drawBackdrop(
                 backdrop = indicatorBackdrop,
                 shape = { Capsule() },
                 effects = {
-                    val press = animation.pressProgress
-                    lens(
-                        7.dp.toPx() * press,
-                        18.dp.toPx() * press,
-                        depthEffect = press > 0.01f,
-                        chromaticAberration = true,
-                    )
+                    if (appearance.usesRefraction) {
+                        val press = animation.pressProgress
+                        lens(
+                            7.dp.toPx() * press,
+                            18.dp.toPx() * press,
+                            depthEffect = press > 0.01f,
+                            chromaticAberration = true,
+                        )
+                    }
                 },
                 highlight = { Highlight.Default.copy(alpha = animation.pressProgress) },
                 shadow = { Shadow(alpha = 0.72f * animation.pressProgress) },
@@ -602,6 +642,18 @@ fun <T> GlassSegmentedControl(
                 .fillMaxSize()
                 .clip(Capsule())
                 .background(trackColor)
+                .drawBehind {
+                    if (appearance.reduceTransparency) {
+                        val visualIndex = if (isLtr) animation.value else items.lastIndex - animation.value
+                        val pillHeight = 28.dp.toPx()
+                        drawRoundRect(
+                            color = if (isLight) Color.White else Color(0xFF636366),
+                            topLeft = Offset(trackPaddingPx + visualIndex * tabWidthPx, trackPaddingPx),
+                            size = Size(tabWidthPx.fastRoundToInt().toFloat(), pillHeight),
+                            cornerRadius = CornerRadius(pillHeight / 2f),
+                        )
+                    }
+                }
                 .then(interactiveHighlight.modifier)
                 .padding(2.dp),
         ) {
@@ -614,7 +666,7 @@ fun <T> GlassSegmentedControl(
 
         // 2. Keep labels stationary in the sampling source, but move the pill with the
         // lens's animated position instead of snapping its background to the target tab.
-        Row(
+        if (appearance.usesBackdrop) Row(
             Modifier
                 .fillMaxSize()
                 .clearAndSetSemantics { }

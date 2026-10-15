@@ -12,6 +12,20 @@ import androidx.compose.ui.unit.dp
 import com.ljyh.mei.ui.theme.AppFontFamily
 
 @Immutable
+data class GlassAppearance(
+    val liquidGlassEnabled: Boolean = true,
+    val reduceTransparency: Boolean = false,
+) {
+    val usesRefraction: Boolean
+        get() = liquidGlassEnabled && !reduceTransparency
+
+    val usesBackdrop: Boolean
+        get() = !reduceTransparency
+}
+
+val LocalGlassAppearance = staticCompositionLocalOf { GlassAppearance() }
+
+@Immutable
 data class GlassColors(
     val isDark: Boolean,
     val accent: Color,

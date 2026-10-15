@@ -138,6 +138,8 @@ import com.ljyh.mei.constants.DownloadsTabEnabledKey
 import com.ljyh.mei.constants.CloudMusicTabEnabledKey
 import com.ljyh.mei.constants.ListeningHistoryTabEnabledKey
 import com.ljyh.mei.constants.NavigationTabOrderKey
+import com.ljyh.mei.constants.LiquidGlassEnabledKey
+import com.ljyh.mei.constants.ReduceTransparencyKey
 import com.ljyh.mei.constants.LastSelectedTabKey
 import com.ljyh.mei.constants.PlayerKeepScreenOnKey
 import com.ljyh.mei.constants.RecognizeClipboardLinksKey
@@ -181,6 +183,8 @@ import com.ljyh.mei.ui.glass.IosBottomSearchToolbar
 import com.ljyh.mei.ui.glass.CompactBottomControlIconSize
 import com.ljyh.mei.ui.glass.LocalGlassBackdrop
 import com.ljyh.mei.ui.glass.LocalGlassColors
+import com.ljyh.mei.ui.glass.GlassAppearance
+import com.ljyh.mei.ui.glass.LocalGlassAppearance
 import com.ljyh.mei.ui.glass.LocalBlurBackdrop
 import com.ljyh.mei.ui.glass.defaultGlassColors
 import com.ljyh.mei.ui.glass.SfIcon
@@ -293,6 +297,8 @@ class MainActivity : ComponentActivity() {
             val recognizeClipboardLinks by rememberPreference(RecognizeClipboardLinksKey, false)
             val navigationPreferences by context.dataStore.data
                 .collectAsState<Preferences, Preferences?>(initial = null)
+            val liquidGlassEnabled = navigationPreferences?.get(LiquidGlassEnabledKey) ?: true
+            val reduceTransparency = navigationPreferences?.get(ReduceTransparencyKey) ?: false
             val podcastsEnabled = navigationPreferences?.get(PodcastsEnabledKey) ?: true
             val downloadsEnabled = navigationPreferences?.get(DownloadsEnabledKey) ?: true
             val cloudMusicEnabled = navigationPreferences?.get(CloudMusicEnabledKey) ?: true
@@ -508,6 +514,7 @@ class MainActivity : ComponentActivity() {
                 CompositionLocalProvider(
                     LocalGlassBackdrop provides glassBackdrop,
                     LocalGlassColors provides glassColors,
+                    LocalGlassAppearance provides GlassAppearance(liquidGlassEnabled, reduceTransparency),
                     LocalBlurBackdrop provides bottomControlsBackdrop,
                     LocalAccentSeedColor provides accentSeedColor,
                     LocalPageAppearance provides registerPageAppearance,
