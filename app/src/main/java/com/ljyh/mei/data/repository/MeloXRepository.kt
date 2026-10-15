@@ -634,7 +634,7 @@ class MeloXRepository @Inject constructor(
         return AccountDetail(
             profile = profile,
             level = response.int("level") ?: 0,
-            listenSongs = response.int("listenSongs") ?: 0,
+            listenSongs = response.int("listenSongs")?.takeIf { it >= 0 },
             createDays = response.int("createDays"),
         )
     }
@@ -650,9 +650,7 @@ class MeloXRepository @Inject constructor(
             "/api/v1/play/record",
             mapOf("uid" to userId, "type" to if (allTime) 0 else 1),
         )
-        return response.array(if (allTime) "allData" else "weekData")
-            .mapNotNull(::parseUserPlayRecord)
-            .filter { it.song.id > 0 }
+        return parseUserPlayRecords(response, allTime)
     }
 
     suspend fun recentSongs(limit: Int = 100): List<AccountSong> {
@@ -1012,9 +1010,7 @@ class MeloXRepository @Inject constructor(
             "/api/song/play/about/block/page",
             mapOf("songId" to songId),
         )
-        val blocks = response.objectOrNull("data")?.array("blocks")
-            .orEmpty()
-            .mapNotNull { it.objectValue() }
+        val blocks = parseSongWikiBlocks(response)
         val basicBlockCodes = setOf(
             "SONG_PLAY_ABOUT_SONG_BASIC",
             "SONG_PLAY_ABOUT_MUSIC_SONG_GRADE",
@@ -1073,29 +1069,7 @@ class MeloXRepository @Inject constructor(
                 }
         }
 
-        val memories = blocks
-            .filter { it.string("code") == "SONG_PLAY_ABOUT_MUSIC_MEMORY" }
-            .flatMap(JsonObject::blockResources)
-            .mapIndexedNotNull { index, resource ->
-                val extension = resource.objectOrNull("resourceExt")
-                    ?: resource.objectOrNull("resourceExtInfo")
-                when (resource.string("resourceType")?.uppercase()) {
-                    "FIRST_LISTEN" -> extension?.objectOrNull("musicFirstListenDto")
-                        ?.string("date")?.nonEmpty()?.let {
-                            SongWikiMemoryItem("first-listen-$index", SongWikiMemoryKind.FirstListen, date = it)
-                        }
-                    "TOTAL_PLAY" -> extension?.objectOrNull("musicTotalPlayDto")?.let { total ->
-                        SongWikiMemoryItem(
-                            id = "total-play-$index",
-                            kind = SongWikiMemoryKind.TotalPlay,
-                            playCount = total.long("playCount"),
-                            durationMinutes = total.long("duration"),
-                            text = total.string("text")?.nonEmpty(),
-                        ).takeIf { it.playCount != null || it.durationMinutes != null || it.text != null }
-                    }
-                    else -> null
-                }
-            }
+        val memories = parseSongListeningMemories(blocks)
 
         val similarSongs = blocks
             .filter { it.string("code") == "SONG_PLAY_ABOUT_SIMILAR_SONG" }
@@ -1670,6 +1644,41 @@ private fun JsonObject.blockResources(): List<JsonObject> = array("creatives")
     .flatMap { it.array("resources") }
     .mapNotNull { it.objectValue() }
 
+internal fun parseSongWikiBlocks(response: JsonObject): List<JsonObject> {
+    check(response.int("code") == 200) {
+        response.string("message") ?: response.string("msg") ?: "Song information is unavailable"
+    }
+    val data = response.element("data") ?: return emptyList()
+    check(data.isJsonObject) { "Song information is unavailable" }
+    val blocks = data.asJsonObject.element("blocks") ?: return emptyList()
+    check(blocks.isJsonArray) { "Song information is unavailable" }
+    return blocks.asJsonArray.mapNotNull(JsonElement::objectValue)
+}
+
+internal fun parseSongListeningMemories(blocks: List<JsonObject>): List<SongWikiMemoryItem> = blocks
+    .filter { it.string("code") == "SONG_PLAY_ABOUT_MUSIC_MEMORY" }
+    .flatMap(JsonObject::blockResources)
+    .mapIndexedNotNull { index, resource ->
+        val extension = resource.objectOrNull("resourceExt")
+            ?: resource.objectOrNull("resourceExtInfo")
+        when (resource.string("resourceType")?.uppercase()) {
+            "FIRST_LISTEN" -> extension?.objectOrNull("musicFirstListenDto")
+                ?.string("date")?.nonEmpty()?.let {
+                    SongWikiMemoryItem("first-listen-$index", SongWikiMemoryKind.FirstListen, date = it)
+                }
+            "TOTAL_PLAY" -> extension?.objectOrNull("musicTotalPlayDto")?.let { total ->
+                SongWikiMemoryItem(
+                    id = "total-play-$index",
+                    kind = SongWikiMemoryKind.TotalPlay,
+                    playCount = total.long("playCount")?.takeIf { it >= 0 },
+                    durationMinutes = total.long("duration")?.takeIf { it > 0 },
+                    text = total.string("text")?.nonEmpty(),
+                ).takeIf { it.playCount != null || it.durationMinutes != null || it.text != null }
+            }
+            else -> null
+        }
+    }
+
 private fun JsonObject?.mainTitle(): String? = this?.objectOrNull("mainTitle")
     ?.string("title")?.nonEmpty()
 
@@ -1872,12 +1881,21 @@ private fun parseAccountSong(value: JsonObject?): AccountSong? = value?.let {
     )
 }
 
-private fun parseUserPlayRecord(element: JsonElement?): UserPlayRecord? {
+internal fun parseUserPlayRecords(response: JsonObject, allTime: Boolean): List<UserPlayRecord> {
+    check(response.int("code") == 200) {
+        response.string("message") ?: response.string("msg") ?: "Listening statistics are unavailable"
+    }
+    val data = response.element(if (allTime) "allData" else "weekData")
+    check(data?.isJsonArray == true) { "Listening statistics are unavailable" }
+    return data.asJsonArray.mapNotNull(::parseUserPlayRecord).filter { it.song.id > 0 }
+}
+
+internal fun parseUserPlayRecord(element: JsonElement?): UserPlayRecord? {
     val value = element?.takeIf(JsonElement::isJsonObject)?.asJsonObject ?: return null
     val song = parseAccountSong(value.objectOrNull("song")) ?: return null
     return UserPlayRecord(
         song = song,
-        playCount = value.int("playCount") ?: 0,
+        playCount = value.int("playCount")?.takeIf { it >= 0 },
         score = value.int("score"),
     )
 }

@@ -1,5 +1,6 @@
 package com.ljyh.mei.ui.screen.song
 
+import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,6 +34,8 @@ import androidx.lifecycle.viewModelScope
 import coil3.compose.AsyncImage
 import com.kyant.capsule.ContinuousRoundedRectangle
 import com.ljyh.mei.R
+import com.ljyh.mei.constants.CookieKey
+import com.ljyh.mei.constants.UserIdKey
 import com.ljyh.mei.data.model.MediaMetadata
 import com.ljyh.mei.data.model.melox.SongWiki
 import com.ljyh.mei.data.model.melox.SongWikiMemoryItem
@@ -53,11 +56,18 @@ import com.ljyh.mei.ui.local.LocalNavController
 import com.ljyh.mei.ui.local.LocalPlayerAwareWindowInsets
 import com.ljyh.mei.ui.local.LocalPlayerConnection
 import com.ljyh.mei.ui.screen.Screen
+import com.ljyh.mei.utils.dataStore
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import java.text.NumberFormat
 import javax.inject.Inject
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 data class SongWikiUiState(
@@ -70,15 +80,34 @@ data class SongWikiUiState(
 @HiltViewModel
 class SongWikiViewModel @Inject constructor(
     private val repository: MeloXRepository,
+    @ApplicationContext private val context: Context,
 ) : ViewModel() {
     private val _state = MutableStateFlow(SongWikiUiState())
     val state = _state.asStateFlow()
+    private var loadJob: Job? = null
 
-    fun load(songId: Long) {
-        if (_state.value.songId == songId && _state.value.wiki != null) return
+    init {
         viewModelScope.launch {
+            context.dataStore.data
+                .map { it[UserIdKey] to it[CookieKey] }
+                .distinctUntilChanged()
+                .collect {
+                    val songId = _state.value.songId
+                    loadJob?.cancel()
+                    _state.value = SongWikiUiState()
+                    if (songId != null) load(songId, force = true)
+                }
+        }
+    }
+
+    fun load(songId: Long, force: Boolean = false) {
+        if (!force && _state.value.songId == songId && _state.value.wiki != null) return
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
             _state.value = SongWikiUiState(songId = songId, isLoading = true)
-            runCatching { repository.songWiki(songId) }
+            val result = runCatching { repository.songWiki(songId) }
+            ensureActive()
+            result
                 .onSuccess { _state.value = SongWikiUiState(songId = songId, wiki = it) }
                 .onFailure {
                     _state.value = SongWikiUiState(songId = songId, error = it.message)
@@ -105,7 +134,7 @@ fun SongWikiScreen(
         onNavigateBack = navController::navigateUp,
         bottomPadding = insets.calculateBottomPadding(),
         actions = {
-            GlassIconButton({ viewModel.load(songId) }) {
+            GlassIconButton({ viewModel.load(songId, force = true) }) {
                 SfIcon(SfSymbol.ArrowClockwise, stringResource(R.string.refresh))
             }
         },
@@ -132,16 +161,30 @@ fun SongWikiScreen(
                     }
                 }
             }
-            state.wiki?.isEmpty == true -> item {
-                WikiEmptyCard()
-            }
             state.wiki != null -> {
                 val wiki = state.wiki!!
-                if (wiki.memories.isNotEmpty()) item {
-                    WikiSection(stringResource(R.string.song_wiki_memories)) {
-                        wiki.memories.forEach { memory -> WikiMemoryRow(memory) }
+                item {
+                    WikiSection(stringResource(R.string.listening_your_song_stats)) {
+                        if (wiki.memories.isEmpty()) {
+                            Text(
+                                stringResource(R.string.listening_song_stats_unavailable),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(vertical = 7.dp),
+                            )
+                        } else {
+                            wiki.memories.firstOrNull { it.kind == SongWikiMemoryKind.TotalPlay }
+                                ?.let { WikiMemoryRow(it) }
+                                ?: WikiLabeledRow(
+                                    stringResource(R.string.song_wiki_total_play),
+                                    stringResource(R.string.listening_count_unavailable),
+                                )
+                            wiki.memories.firstOrNull { it.kind == SongWikiMemoryKind.FirstListen }
+                                ?.let { WikiMemoryRow(it) }
+                        }
                     }
                 }
+                if (wiki.isEmpty) item { WikiEmptyCard() }
                 if (wiki.tagGroups.isNotEmpty()) item {
                     WikiSection(stringResource(R.string.song_wiki_tags)) {
                         wiki.tagGroups.forEach { group ->
@@ -304,7 +347,7 @@ private fun WikiMemoryRow(memory: SongWikiMemoryItem) {
         SongWikiMemoryKind.TotalPlay -> listOfNotNull(
             memory.playCount?.let {
                 stringResource(R.string.song_wiki_play_times, numberFormat.format(it))
-            },
+            } ?: stringResource(R.string.listening_count_unavailable),
             memory.durationMinutes?.takeIf { it > 0 }?.let {
                 stringResource(R.string.song_wiki_play_minutes, numberFormat.format(it))
             },

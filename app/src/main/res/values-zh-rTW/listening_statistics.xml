@@ -1,0 +1,12 @@
+<resources>
+    <string name="listening_account_level_summary">Lv.%1$d · 累計聽歌 %2$s 首</string>
+    <string name="listening_cumulative_songs">累計聽歌</string>
+    <string name="listening_song_count">%1$s 首</string>
+    <string name="listening_account_total_context">此網易雲帳號的全部聽歌記錄</string>
+    <string name="listening_rank_week_context">最近一週內，你對每首歌的播放次數</string>
+    <string name="listening_rank_all_time_context">你對每首歌的累計播放次數</string>
+    <string name="listening_rank_play_count">%1$s 次</string>
+    <string name="listening_count_unavailable">暫無資料</string>
+    <string name="listening_your_song_stats">你的聆聽</string>
+    <string name="listening_song_stats_unavailable">這首歌暫時沒有可用的個人聽歌記錄</string>
+</resources>

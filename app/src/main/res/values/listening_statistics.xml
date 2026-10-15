@@ -1,0 +1,12 @@
+<resources>
+    <string name="listening_account_level_summary">Lv.%1$d · %2$s songs listened</string>
+    <string name="listening_cumulative_songs">Songs Listened</string>
+    <string name="listening_song_count">%1$s songs</string>
+    <string name="listening_account_total_context">All-time total for this NetEase account</string>
+    <string name="listening_rank_week_context">Your plays in the past week</string>
+    <string name="listening_rank_all_time_context">Your all-time plays</string>
+    <string name="listening_rank_play_count">%1$s plays</string>
+    <string name="listening_count_unavailable">Unavailable</string>
+    <string name="listening_your_song_stats">Your Listening</string>
+    <string name="listening_song_stats_unavailable">No personal listening records are available for this song.</string>
+</resources>

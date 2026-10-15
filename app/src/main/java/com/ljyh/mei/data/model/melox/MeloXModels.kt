@@ -298,7 +298,7 @@ data class AccountProfile(
 data class AccountDetail(
     val profile: AccountProfile,
     val level: Int,
-    val listenSongs: Int,
+    val listenSongs: Int?,
     val createDays: Int?,
 )
 
@@ -325,6 +325,6 @@ data class AccountSong(
 
 data class UserPlayRecord(
     val song: AccountSong,
-    val playCount: Int,
+    val playCount: Int?,
     val score: Int?,
 )

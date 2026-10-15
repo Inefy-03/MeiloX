@@ -1,0 +1,12 @@
+<resources>
+    <string name="listening_account_level_summary">Lv.%1$d · 累计听歌 %2$s 首</string>
+    <string name="listening_cumulative_songs">累计听歌</string>
+    <string name="listening_song_count">%1$s 首</string>
+    <string name="listening_account_total_context">此网易云账号的全部听歌记录</string>
+    <string name="listening_rank_week_context">最近一周内，你对每首歌的播放次数</string>
+    <string name="listening_rank_all_time_context">你对每首歌的累计播放次数</string>
+    <string name="listening_rank_play_count">%1$s 次</string>
+    <string name="listening_count_unavailable">暂无数据</string>
+    <string name="listening_your_song_stats">你的聆听</string>
+    <string name="listening_song_stats_unavailable">这首歌暂时没有可用的个人听歌记录</string>
+</resources>
