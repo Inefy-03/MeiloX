@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="library_page_albums">Albums</string>
+    <string name="library_filter_all">All</string>
+    <string name="library_filter_created">Created by Me</string>
+    <string name="library_filter_subscribed">Subscribed</string>
+    <string name="library_empty_created_playlists">No created playlists</string>
+    <string name="library_empty_subscribed_playlists">No subscribed playlists</string>
+    <string name="library_load_more">Load More</string>
+    <string name="library_collection_load_failed">Unable to load your library. Try again.</string>
+    <string name="album_subscription_update_failed">Unable to update album subscription. Try again.</string>
+    <string name="album_subscription_load_failed">Unable to check album subscription. Tap to retry.</string>
+    <string name="album_subscription_updating">Updating…</string>
+</resources>

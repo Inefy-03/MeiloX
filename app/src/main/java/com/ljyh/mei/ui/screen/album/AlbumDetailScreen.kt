@@ -55,7 +55,7 @@ fun AlbumDetailScreen(
     // 1. 请求初始数据
     LaunchedEffect(id) {
         viewModel.getAlbumDetail(id.toString())
-        viewModel.isSubscribe(id)
+        viewModel.refreshSubscription(id)
     }
 
     val context = LocalContext.current
@@ -63,53 +63,20 @@ fun AlbumDetailScreen(
     val playerConnection = LocalPlayerConnection.current ?: return
 
     val albumDetail by viewModel.albumDetail.collectAsState()
-    val subscribeState by viewModel.subscribeAlbum.collectAsState()
-    val unSubscribeState by viewModel.unSubscribeAlbum.collectAsState()
-    val isSubscribeState by viewModel.isSubscribe.collectAsState()
-
-
-    // 3. 本地收藏状态 (乐观更新核心)
-    var isSubscribed by remember { mutableStateOf(false) }
-
-    // 处理收藏失败的回滚逻辑
-    LaunchedEffect(subscribeState) {
-        if (subscribeState is Resource.Success) {
-            val detail = (albumDetail as? Resource.Success)?.data?.album
-            if (detail != null) viewModel.insertAlbum(
-                com.ljyh.mei.data.model.room.AlbumEntity(detail.id, detail.name, detail.picUrl, detail.publishTime, detail.size),
-                detail.artists.map { com.ljyh.mei.data.model.room.ArtistEntity(it.id.toLong(), it.name, it.picUrl) },
-            )
+    val subscription by viewModel.subscription.collectAsState()
+    val isSubscribed = subscription.subscribed == true
+    val cookie by rememberPreference(com.ljyh.mei.constants.CookieKey, "")
+    LaunchedEffect(subscription.error) {
+        val message = when (subscription.error) {
+            AlbumSubscriptionError.Load -> com.ljyh.mei.R.string.album_subscription_load_failed
+            AlbumSubscriptionError.Update -> com.ljyh.mei.R.string.album_subscription_update_failed
+            null -> null
         }
-        if (subscribeState is Resource.Error) {
-            isSubscribed = false // 回滚
-            Toast.makeText(context, "收藏失败: ${(subscribeState as Resource.Error).message}", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    LaunchedEffect(unSubscribeState) {
-        when(val result= unSubscribeState){
-            is Resource.Success->{
-                isSubscribed = false // 回滚
-                viewModel.deleteAlbum(id)
-                Toast.makeText(context, "取消收藏成功", Toast.LENGTH_SHORT).show()
-            }
-            is Resource.Error->{
-                isSubscribed = true // 回滚
-                Toast.makeText(context, "取消收藏失败: ${result.message}", Toast.LENGTH_SHORT).show()
-            }
-            else -> {}
-        }
-        if (unSubscribeState is Resource.Error) {
-
-        }
-    }
-
-    LaunchedEffect(isSubscribeState) {
-        isSubscribed=isSubscribeState
+        message?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
     }
 
     // 4. 构建 UI 数据模型
-    val uiData = remember(albumDetail) {
+    val uiData = remember(albumDetail, isSubscribed) {
         if (albumDetail is Resource.Success) {
             val album = (albumDetail as Resource.Success).data.album
             val songs = (albumDetail as Resource.Success).data.songs
@@ -125,7 +92,7 @@ fun AlbumDetailScreen(
                 description = album.description,
                 tracks = songs.map { it.toMediaMetadata().copy(coverUrl = album.picUrl) },
                 playCount = -1,
-                isSubscribed = isSubscribeState
+                isSubscribed = isSubscribed
             )
         } else {
             UiPlaylist(
@@ -212,10 +179,17 @@ fun AlbumDetailScreen(
     }
 
     fun toggleSubscription() {
-        isSubscribed = !isSubscribed
-        if (isSubscribed) viewModel.subscribeAlbum(id.toString())
-        else viewModel.unSubscribeAlbum(id.toString())
+        if (cookie.isBlank()) Screen.NeteaseLogin.navigate(navController)
+        else viewModel.toggleSubscription(id)
     }
+    val subscriptionLabel = androidx.compose.ui.res.stringResource(
+        when {
+            subscription.isUpdating -> com.ljyh.mei.R.string.album_subscription_updating
+            subscription.error == AlbumSubscriptionError.Load -> com.ljyh.mei.R.string.retry
+            isSubscribed -> com.ljyh.mei.R.string.album_unsubscribe
+            else -> com.ljyh.mei.R.string.album_subscribe
+        },
+    )
     val detailMenu = listOf(
         com.ljyh.mei.ui.glass.IosCascadingMenuItem(
             androidx.compose.ui.res.stringResource(com.ljyh.mei.R.string.album_download_all, uiData.tracks.size),
@@ -229,13 +203,14 @@ fun AlbumDetailScreen(
             onClick = { selectedIds = emptySet(); selectionMode = true },
         ),
         com.ljyh.mei.ui.glass.IosCascadingMenuItem(
-            androidx.compose.ui.res.stringResource(if (isSubscribed) com.ljyh.mei.R.string.album_unsubscribe else com.ljyh.mei.R.string.album_subscribe),
+            subscriptionLabel,
             if (isSubscribed) "checkmark" else "plus", separatorBefore = true,
+            enabled = !subscription.isLoading && !subscription.isUpdating,
             onClick = ::toggleSubscription,
         ),
         com.ljyh.mei.ui.glass.IosCascadingMenuItem(
             androidx.compose.ui.res.stringResource(com.ljyh.mei.R.string.album_refresh), "arrow.clockwise",
-            onClick = { viewModel.getAlbumDetail(id.toString()); viewModel.isSubscribe(id) },
+            onClick = { viewModel.getAlbumDetail(id.toString()); viewModel.refreshSubscription(id) },
         ),
     )
     androidx.compose.runtime.DisposableEffect(selectionMode, selectedIds, displayedUiData, downloadPath, downloadQuality) {
@@ -319,7 +294,7 @@ fun AlbumDetailScreen(
 
             // 头部按钮逻辑
             headerActionIcon = if (isSubscribed) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-            headerActionLabel = if (isSubscribed) "取消收藏" else "收藏",
+            headerActionLabel = subscriptionLabel,
             onHeaderAction = ::toggleSubscription,
             isSubscribed = isSubscribed,
             detailMenu = detailMenu,

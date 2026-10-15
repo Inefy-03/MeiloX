@@ -36,6 +36,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 
@@ -49,6 +50,8 @@ class PlaylistRepository(
     private val subscriptionScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
+    private val _collectionChanges = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val collectionChanges = _collectionChanges.asSharedFlow()
     private val subscriptionLock = Any()
     private val subscriptions = mutableMapOf<SubscriptionKey, SubscriptionEntry>()
 
@@ -121,7 +124,7 @@ class PlaylistRepository(
                 // await, but accepted writes belong to this singleton repository's scope.
                 val result = subscriptionScope.async(start = CoroutineStart.LAZY) {
                     previous?.result?.join()
-                    safeApiCall {
+                    val response = safeApiCall {
                         if (subscribed) {
                             val bodyToken = freshCheckToken()
                             val headerToken = freshCheckToken()
@@ -150,6 +153,10 @@ class PlaylistRepository(
                             response
                         }
                     }
+                    if (response is Resource.Success && response.data.code == 200 && subscriptionAccount() == key.account) {
+                        _collectionChanges.emit(Unit)
+                    }
+                    response
                 }
                 val write = SubscriptionWrite(subscribed, result)
                 entry.pending = write
@@ -289,7 +296,7 @@ class PlaylistRepository(
                         privacy = if (privacy) "10" else "0",
                         type = type
                     )
-                )
+                ).also { if (it.code == 200) _collectionChanges.emit(Unit) }
             }
         }
     }

@@ -6,18 +6,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import com.ljyh.mei.ui.glass.IosTypography
+import com.ljyh.mei.ui.glass.LocalGlassColors
 import com.kyant.capsule.ContinuousRoundedRectangle
 
 @Composable
@@ -25,17 +24,17 @@ fun LibraryGridItem(
     title: String,
     subtitle: String,
     cover: String,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = Modifier
-            .width(160.dp)
+        modifier = modifier
             .clickable { onClick() }
     ) {
         Card(
-            shape = ContinuousRoundedRectangle(16.dp),
-            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-            modifier = Modifier.aspectRatio(1f) // 强制正方形封面
+            shape = ContinuousRoundedRectangle(10.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+            modifier = Modifier.aspectRatio(1f)
         ) {
             AsyncImage(
                 model = cover,
@@ -49,15 +48,17 @@ fun LibraryGridItem(
 
         Text(
             text = title,
-            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+            style = IosTypography.body,
+            color = LocalGlassColors.current.content,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
         Text(
             text = subtitle,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1
+            style = IosTypography.caption,
+            color = LocalGlassColors.current.secondaryContent,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }

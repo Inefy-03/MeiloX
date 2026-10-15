@@ -1,0 +1,165 @@
+package com.ljyh.mei.data.repository
+
+import android.content.Context
+import androidx.datastore.preferences.core.edit
+import com.google.gson.JsonObject
+import com.google.gson.Gson
+import com.ljyh.mei.constants.CookieKey
+import com.ljyh.mei.constants.UserIdKey
+import com.ljyh.mei.constants.UserAvatarUrlKey
+import com.ljyh.mei.constants.UserNicknameKey
+import com.ljyh.mei.data.model.UserPlaylist
+import com.ljyh.mei.data.model.UserAlbumList
+import com.ljyh.mei.data.network.api.ApiService
+import com.ljyh.mei.data.network.api.MeloXDirectService
+import com.ljyh.mei.data.network.NETEASE_EXPECTED_SESSION_HEADER
+import com.ljyh.mei.data.network.neteaseSessionFingerprint
+import com.ljyh.mei.ui.model.Album
+import com.ljyh.mei.ui.model.toAlbum
+import com.ljyh.mei.utils.dataStore
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import javax.inject.Inject
+import javax.inject.Named
+import javax.inject.Singleton
+
+data class LibraryAccount(val userId: String, private val credential: String) {
+    val sessionFingerprint: String get() = neteaseSessionFingerprint(credential)
+    override fun toString(): String = "LibraryAccount(userId=$userId)"
+}
+
+data class LibraryCollectionPage<T>(
+    val items: List<T>,
+    val nextOffset: Int,
+    val hasMore: Boolean,
+)
+
+@Singleton
+class LibraryCollectionsRepository @Inject constructor(
+    private val api: ApiService,
+    @Named("MeloXWeapi") private val weapi: MeloXDirectService,
+    @Named("MeloXEapi") private val eapi: MeloXDirectService,
+    @ApplicationContext private val context: Context,
+) {
+    private val profileMutex = Mutex()
+    private val albumWriteMutex = Mutex()
+    private val albumWriteScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    val accounts = context.dataStore.data.map { preferences ->
+        val userId = preferences[UserIdKey].orEmpty()
+        val credential = preferences[CookieKey].orEmpty()
+        if (userId.toLongOrNull()?.let { it > 0 } == true && credential.isNotBlank()) {
+            LibraryAccount(userId, credential)
+        } else null
+    }.distinctUntilChanged()
+
+    private val _albumChanges = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val albumChanges = _albumChanges.asSharedFlow()
+
+    suspend fun restoreAccountIfNeeded() = profileMutex.withLock {
+        val saved = context.dataStore.data.first()
+        val cookie = saved[CookieKey].orEmpty()
+        if (cookie.isBlank() || saved[UserIdKey]?.toLongOrNull()?.let { it > 0 } == true) return@withLock
+        try {
+            val response = api.getAccountDetail()
+            val profile = response.profile
+            if (response.code != 200 || profile == null || profile.userId <= 0) return@withLock
+            context.dataStore.edit { current ->
+                if (current[CookieKey] == cookie && current[UserIdKey]?.toLongOrNull()?.let { it > 0 } != true) {
+                    current[UserIdKey] = profile.userId.toString()
+                    current[UserNicknameKey] = profile.nickname
+                    current[UserAvatarUrlKey] = profile.avatarUrl
+                }
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            // A failed profile restore leaves the normal sign-in entry available.
+        }
+    }
+
+    suspend fun albums(account: LibraryAccount, offset: Int): LibraryCollectionPage<Album> {
+        ensureAccount(account)
+        val response = Gson().fromJson(
+            readRequest("/api/album/sublist", mapOf("limit" to 50, "offset" to offset, "total" to true)),
+            UserAlbumList::class.java,
+        )
+        ensureAccount(account)
+        check(response.code == 200) { "NetEase album request failed (${response.code})" }
+        val albums = response.data
+        return LibraryCollectionPage(
+            items = albums.map { it.toAlbum() },
+            nextOffset = offset + albums.size,
+            hasMore = response.hasMore && albums.isNotEmpty(),
+        )
+    }
+
+    suspend fun playlists(account: LibraryAccount, offset: Int): LibraryCollectionPage<UserPlaylist.Playlist> {
+        ensureAccount(account)
+        val response = Gson().fromJson(
+            readRequest("/api/user/playlist", mapOf("uid" to account.userId, "limit" to 100, "offset" to offset)),
+            UserPlaylist::class.java,
+        )
+        ensureAccount(account)
+        check(response.code == 200) { "NetEase playlist request failed (${response.code})" }
+        return LibraryCollectionPage(
+            items = response.playlist,
+            nextOffset = offset + response.playlist.size,
+            hasMore = response.more && response.playlist.isNotEmpty(),
+        )
+    }
+
+    suspend fun albumSubscription(account: LibraryAccount, id: Long): Boolean = albumWriteMutex.withLock {
+        ensureAccount(account)
+        val response = readRequest("/api/album/detail/dynamic", mapOf("id" to id))
+        ensureAccount(account)
+        response.requireSuccess()
+        response.get("isSub")?.takeUnless { it.isJsonNull }?.asBoolean
+            ?: error("NetEase album subscription status is unavailable")
+    }
+
+    suspend fun setAlbumSubscription(account: LibraryAccount, id: Long, subscribed: Boolean) {
+        // Accepted writes continue after the detail screen leaves composition.
+        albumWriteScope.async(start = CoroutineStart.UNDISPATCHED) {
+            albumWriteMutex.withLock {
+                ensureAccount(account)
+                val response = weapi.post(
+                    if (subscribed) "/weapi/album/sub" else "/weapi/album/unsub",
+                    mapOf("id" to id),
+                    headers = mapOf(NETEASE_EXPECTED_SESSION_HEADER to account.sessionFingerprint),
+                )
+                ensureAccount(account)
+                response.requireSuccess()
+                _albumChanges.emit(Unit)
+            }
+        }.await()
+    }
+
+    private suspend fun ensureAccount(expected: LibraryAccount) {
+        if (accounts.first() != expected) throw CancellationException("Library account changed")
+    }
+
+    private suspend fun readRequest(path: String, body: Map<String, Any>): JsonObject = try {
+        weapi.post(path.replaceFirst("/api/", "/weapi/"), body).also { it.requireSuccess() }
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        eapi.post(path.replaceFirst("/api/", "/eapi/"), body).also { it.requireSuccess() }
+    }
+}
+
+private fun JsonObject.requireSuccess() {
+    val code = get("code")?.takeUnless { it.isJsonNull }?.asInt
+    check(code == 200) { "NetEase album request failed (${code ?: "missing code"})" }
+}

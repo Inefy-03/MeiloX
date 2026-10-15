@@ -47,6 +47,29 @@ class MeloXNavigationTest {
     }
 
     @Test
+    fun albumAndPodcastPlacementsRemainIndependentlyConfigurable() {
+        val layout = NavigationLayout(
+            homeTabs = listOf(AppTab.Recommended, AppTab.LibraryAlbums),
+            separatedLibraryPages = listOf(LibraryPage.Albums, LibraryPage.Podcasts),
+        )
+
+        assertTrue(AppTab.LibraryAlbums in AppTab.configurablePages)
+        assertTrue(AppTab.LibraryPodcasts in AppTab.configurablePages)
+        assertEquals(AppTab.LibraryAlbums, AppTab.fromLibraryPage(LibraryPage.Albums))
+        assertEquals(AppTab.LibraryPodcasts, AppTab.fromLibraryPage(LibraryPage.Podcasts))
+        assertEquals(listOf(LibraryPage.Albums, LibraryPage.Podcasts), layout.normalizedSeparatedPages)
+        assertEquals(listOf(AppTab.Recommended, AppTab.LibraryAlbums), layout.normalizedHomeTabs)
+        assertEquals(AppPagePlacement.Home, layout.placementOf(AppTab.LibraryAlbums))
+        assertEquals(AppPagePlacement.TabBar, layout.placementOf(AppTab.LibraryPodcasts))
+        assertFalse(AppTab.LibraryAlbums in layout.visibleTabs)
+        assertTrue(AppTab.LibraryPodcasts in layout.visibleTabs)
+
+        val embeddedPodcastLayout = layout.copy(separatedLibraryPages = listOf(LibraryPage.Albums))
+        assertEquals(AppPagePlacement.Home, embeddedPodcastLayout.placementOf(AppTab.LibraryAlbums))
+        assertEquals(AppPagePlacement.Library, embeddedPodcastLayout.placementOf(AppTab.LibraryPodcasts))
+    }
+
+    @Test
     fun placementsRespectHomeAndSeparatedLibraryPages() {
         val layout = NavigationLayout()
 

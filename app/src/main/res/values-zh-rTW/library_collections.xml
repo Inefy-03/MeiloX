@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="library_page_albums">專輯</string>
+    <string name="library_filter_all">全部</string>
+    <string name="library_filter_created">我建立的</string>
+    <string name="library_filter_subscribed">我收藏的</string>
+    <string name="library_empty_created_playlists">尚未建立歌單</string>
+    <string name="library_empty_subscribed_playlists">尚未收藏歌單</string>
+    <string name="library_load_more">載入更多</string>
+    <string name="library_collection_load_failed">資料庫暫時無法載入，請重試。</string>
+    <string name="album_subscription_update_failed">專輯收藏更新失敗，請重試。</string>
+    <string name="album_subscription_load_failed">暫時無法取得專輯收藏狀態，點一下重試。</string>
+    <string name="album_subscription_updating">正在更新…</string>
+</resources>

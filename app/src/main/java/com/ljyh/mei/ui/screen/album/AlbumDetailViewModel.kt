@@ -1,80 +1,107 @@
 package com.ljyh.mei.ui.screen.album
 
 import androidx.lifecycle.ViewModel
-    import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewModelScope
 import com.ljyh.mei.constants.MusicQuality
 import com.ljyh.mei.data.model.AlbumDetail
-import com.ljyh.mei.data.model.api.BaseResponse
-import com.ljyh.mei.data.model.room.AlbumEntity
-import com.ljyh.mei.data.model.room.ArtistEntity
 import com.ljyh.mei.data.network.Resource
+import com.ljyh.mei.data.repository.LibraryAccount
+import com.ljyh.mei.data.repository.LibraryCollectionsRepository
 import com.ljyh.mei.data.repository.PlaylistRepository
-import com.ljyh.mei.di.repository.AlbumsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+
+enum class AlbumSubscriptionError { Load, Update }
+
+data class AlbumSubscriptionState(
+    val subscribed: Boolean? = null,
+    val isLoading: Boolean = true,
+    val isUpdating: Boolean = false,
+    val error: AlbumSubscriptionError? = null,
+)
 
 @HiltViewModel
 class AlbumDetailViewModel @Inject constructor(
     private val repository: PlaylistRepository,
-    private val albumsRepository: AlbumsRepository
+    private val collections: LibraryCollectionsRepository,
 ) : ViewModel() {
     private val _albumDetail = MutableStateFlow<Resource<AlbumDetail>>(Resource.Loading)
-    val albumDetail: StateFlow<Resource<AlbumDetail>> = _albumDetail
+    val albumDetail = _albumDetail.asStateFlow()
+    private val _subscription = MutableStateFlow(AlbumSubscriptionState())
+    val subscription = _subscription.asStateFlow()
+    private var activeAccount: LibraryAccount? = null
+    private var albumId: Long? = null
+    private var detailJob: Job? = null
+    private var subscriptionJob: Job? = null
 
-    private val _subscribeAlbum = MutableStateFlow<Resource<BaseResponse>>(Resource.Loading)
-    val subscribeAlbum: StateFlow<Resource<BaseResponse>> = _subscribeAlbum
-
-    private val _unSubscribeAlbum = MutableStateFlow<Resource<BaseResponse>>(Resource.Loading)
-    val unSubscribeAlbum: StateFlow<Resource<BaseResponse>> = _unSubscribeAlbum
-
-    private val _isSubscribe = MutableStateFlow(false)
-    val isSubscribe: StateFlow<Boolean> = _isSubscribe
-
+    init {
+        viewModelScope.launch {
+            collections.accounts.collect { account ->
+                subscriptionJob?.cancel()
+                activeAccount = account
+                _subscription.value = AlbumSubscriptionState(isLoading = account != null)
+                albumId?.let(::refreshSubscription)
+                if (account == null) collections.restoreAccountIfNeeded()
+            }
+        }
+    }
 
     fun getAlbumDetail(id: String) {
-        viewModelScope.launch {
+        detailJob?.cancel()
+        detailJob = viewModelScope.launch {
             _albumDetail.value = Resource.Loading
             _albumDetail.value = repository.getAlbumDetail(id)
         }
     }
 
-    fun subscribeAlbum(id: String) {
-        viewModelScope.launch {
-            _subscribeAlbum.value = Resource.Loading
-            _subscribeAlbum.value = repository.subscribeAlbum(id)
+    fun refreshSubscription(id: Long) {
+        albumId = id
+        val account = activeAccount ?: return
+        if (_subscription.value.isUpdating) return
+        subscriptionJob?.cancel()
+        _subscription.value = AlbumSubscriptionState()
+        subscriptionJob = viewModelScope.launch {
+            try {
+                val subscribed = collections.albumSubscription(account, id)
+                if (activeAccount == account && albumId == id) {
+                    _subscription.value = AlbumSubscriptionState(subscribed = subscribed, isLoading = false)
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                if (activeAccount == account && albumId == id) {
+                    _subscription.value = AlbumSubscriptionState(isLoading = false, error = AlbumSubscriptionError.Load)
+                }
+            }
         }
     }
 
-    fun unSubscribeAlbum(id: String) {
-        viewModelScope.launch {
-            _unSubscribeAlbum.value = Resource.Loading
-            _unSubscribeAlbum.value = repository.unsubscribeAlbum(id)
+    fun toggleSubscription(id: Long) {
+        val account = activeAccount ?: return
+        val previous = _subscription.value
+        if (previous.isLoading || previous.isUpdating) return
+        val subscribed = previous.subscribed ?: return refreshSubscription(id)
+        _subscription.value = previous.copy(isUpdating = true, error = null)
+        subscriptionJob = viewModelScope.launch {
+            try {
+                collections.setAlbumSubscription(account, id, !subscribed)
+                if (activeAccount == account && albumId == id) {
+                    _subscription.value = AlbumSubscriptionState(subscribed = !subscribed, isLoading = false)
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                if (activeAccount == account && albumId == id) {
+                    _subscription.value = previous.copy(isUpdating = false, error = AlbumSubscriptionError.Update)
+                }
+            }
         }
     }
 
-
-    fun isSubscribe(id: Long) {
-        viewModelScope.launch {
-            _isSubscribe.value = albumsRepository.existsAlbum(id)
-        }
-    }
-
-    fun insertAlbum(album: AlbumEntity, artists: List<ArtistEntity>){
-        viewModelScope.launch {
-            albumsRepository.insertAlbum(album, artists)
-        }
-    }
-
-    fun deleteAlbum(id:Long){
-        viewModelScope.launch {
-            albumsRepository.deleteArtistWithCleanup(id)
-        }
-    }
-
-    suspend fun resolveSongUrls(ids: List<String>, quality: MusicQuality) =
-        repository.getSongUrlV1(ids, quality)
-
+    suspend fun resolveSongUrls(ids: List<String>, quality: MusicQuality) = repository.getSongUrlV1(ids, quality)
 }

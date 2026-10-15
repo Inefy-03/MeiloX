@@ -7,6 +7,7 @@ import com.ljyh.mei.BuildConfig
 import com.ljyh.mei.constants.AndroidUserAgent
 import com.ljyh.mei.data.network.QQMusicUApiService
 import com.ljyh.mei.data.network.NeteaseSecurityDns
+import com.ljyh.mei.data.network.NETEASE_EXPECTED_SESSION_HEADER
 import com.ljyh.mei.data.network.api.ApiService
 import com.ljyh.mei.data.network.api.EApiService
 import com.ljyh.mei.data.network.api.WeApiService
@@ -53,6 +54,7 @@ object RetrofitModule {
             addInterceptor(HttpLoggingInterceptor().apply {
                 redactHeader("Cookie")
                 redactHeader("X-Music-U")
+                redactHeader(NETEASE_EXPECTED_SESSION_HEADER)
                 redactQueryParams("ydDeviceToken")
                 level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BASIC else HttpLoggingInterceptor.Level.NONE
             })

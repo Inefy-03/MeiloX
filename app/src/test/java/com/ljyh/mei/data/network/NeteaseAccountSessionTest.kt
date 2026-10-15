@@ -10,13 +10,50 @@ import com.ljyh.mei.constants.NeteaseSessionTypeKey
 import com.ljyh.mei.constants.NeteaseUrsAppIdKey
 import com.ljyh.mei.constants.NeteaseWebSessionNoticeDismissedKey
 import com.ljyh.mei.constants.UserIdKey
+import com.ljyh.mei.di.NeteaseInterceptor
+import java.io.IOException
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 class NeteaseAccountSessionTest {
+    @Test fun queuedMutationRejectsChangedOrSignedOutSessionBeforeTransport() {
+        val fingerprint = neteaseSessionFingerprint("original-session")
+        var transportCalls = 0
+        for (currentCookie in listOf("different-session", "")) {
+            val client = OkHttpClient.Builder()
+                .addInterceptor(NeteaseInterceptor { mutablePreferencesOf(CookieKey to currentCookie) })
+                .addInterceptor {
+                    transportCalls++
+                    error("A stale mutation must not reach transport")
+                }.build()
+            val request = Request.Builder().url("https://example.test/weapi/album/sub")
+                .header(NETEASE_EXPECTED_SESSION_HEADER, fingerprint)
+                .post("{}".toRequestBody()).build()
+            try {
+                client.newCall(request).execute().close()
+                fail("The captured session no longer matches")
+            } catch (error: IOException) {
+                assertTrue(error.message.orEmpty().contains("session changed"))
+                if (currentCookie.isNotEmpty()) assertFalse(error.message.orEmpty().contains(currentCookie))
+            }
+        }
+        assertEquals(0, transportCalls)
+    }
+
+    @Test fun matchingMutationSessionUsesTheCurrentAccountSnapshot() {
+        val preferences = mutablePreferencesOf(CookieKey to "current-session")
+        preferences.requireExpectedNeteaseSession(neteaseSessionFingerprint("current-session"))
+        preferences.requireExpectedNeteaseSession(null)
+        assertEquals("current-session", preferences[CookieKey])
+    }
+
     @Test fun emptyCookieNeverEnablesMobileAuthorization() {
         val preferences = mutablePreferencesOf(
             NeteaseSessionTypeKey to "Mobile", NeteaseUrsAppIdKey to "urs-id",

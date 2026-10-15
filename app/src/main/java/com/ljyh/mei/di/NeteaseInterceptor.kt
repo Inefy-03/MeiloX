@@ -22,6 +22,8 @@ import com.ljyh.mei.data.network.NeteaseAegisSecurity
 import com.ljyh.mei.data.network.NeteaseSessionType
 import com.ljyh.mei.data.network.NeteaseAndroidClientProfile
 import com.ljyh.mei.data.network.neteaseSessionType
+import com.ljyh.mei.data.network.NETEASE_EXPECTED_SESSION_HEADER
+import com.ljyh.mei.data.network.requireExpectedNeteaseSession
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import com.ljyh.mei.utils.dataStore
@@ -167,6 +169,7 @@ class NeteaseInterceptor internal constructor(
         val nmdi = originalRequest.header(NMDI_HEADER)?.takeIf(String::isNotBlank)
         val nmtid = originalRequest.header(NMTID_HEADER)?.takeIf(String::isNotBlank)
         val preferences = accountPreferences()
+        preferences.requireExpectedNeteaseSession(originalRequest.header(NETEASE_EXPECTED_SESSION_HEADER))
         val ursAppId = originalRequest.header(URS_APP_ID_HEADER)?.takeIf(String::isNotBlank)
             ?: preferences[NeteaseUrsAppIdKey]?.takeIf(String::isNotBlank)
         val withoutAccount = originalRequest.header(WITHOUT_ACCOUNT_HEADER) == "true"
@@ -186,6 +189,7 @@ class NeteaseInterceptor internal constructor(
             .removeHeader(USER_AGENT_HEADER)
             .removeHeader(NETEASE_EAPI_PROFILE_HEADER)
             .removeHeader(NETEASE_WEB_SESSION_HEADER)
+            .removeHeader(NETEASE_EXPECTED_SESSION_HEADER)
 
         if (isPlaybackHistoryProfile) {
             originalRequest.headers.names()

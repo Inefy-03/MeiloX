@@ -25,6 +25,7 @@ enum class LibraryPage(
 ) {
     Songs(R.string.library_page_songs, SfSymbol.MusicNote),
     Playlists(R.string.library_page_playlists, SfSymbol.MusicNoteList),
+    Albums(R.string.library_page_albums, SfSymbol.MusicNoteSquareStackFilled),
     Podcasts(R.string.library_page_podcasts, SfSymbol.Microphone, ContentFeature.Podcasts),
     Downloads(R.string.library_page_downloads, SfSymbol.Download, ContentFeature.Downloads),
     Cloud(R.string.library_page_cloud, SfSymbol.Cloud, ContentFeature.CloudMusic),
@@ -45,6 +46,7 @@ enum class AppTab(
     Library(R.string.app_tab_library, SfSymbol.MusicNoteList),
     LibrarySongs(R.string.app_tab_library_songs, SfSymbol.Heart, LibraryPage.Songs),
     LibraryPlaylists(R.string.app_tab_library_playlists, SfSymbol.MusicNoteList, LibraryPage.Playlists),
+    LibraryAlbums(R.string.library_page_albums, SfSymbol.MusicNoteSquareStackFilled, LibraryPage.Albums),
     LibraryPodcasts(
         R.string.app_tab_library_podcasts,
         SfSymbol.Microphone,
@@ -84,6 +86,7 @@ enum class AppTab(
         val libraryContentPages = listOf(
             LibrarySongs,
             LibraryPlaylists,
+            LibraryAlbums,
             LibraryPodcasts,
             LibraryDownloads,
             LibraryCloud,
@@ -94,6 +97,7 @@ enum class AppTab(
         fun fromLibraryPage(page: LibraryPage): AppTab = when (page) {
             LibraryPage.Songs -> LibrarySongs
             LibraryPage.Playlists -> LibraryPlaylists
+            LibraryPage.Albums -> LibraryAlbums
             LibraryPage.Podcasts -> LibraryPodcasts
             LibraryPage.Downloads -> LibraryDownloads
             LibraryPage.Cloud -> LibraryCloud
