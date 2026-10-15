@@ -42,7 +42,7 @@ import com.ljyh.mei.ui.glass.LocalBlurBackdrop
 import com.ljyh.mei.ui.glass.LocalGlassBackdrop
 import com.ljyh.mei.ui.glass.LocalGroupedListBackgroundAlpha
 import com.ljyh.mei.ui.glass.SheetGroupedListBackgroundAlpha
-import com.ljyh.mei.ui.glass.rememberCrossWindowBackdrop
+import com.ljyh.mei.ui.glass.rememberRasterizedPlayerBackdrop
 import coil3.compose.rememberAsyncImagePainter
 import coil3.request.ImageRequest
 import coil3.size.Precision
@@ -99,9 +99,9 @@ fun BottomSheetPlayer(
     // separate source so sheets can sample it without changing that visual z-order.
     val playerCoverBackdrop = rememberLayerBackdrop()
     val playerBackdrop = rememberCombinedBackdrop(
-        rememberCrossWindowBackdrop(playerBackgroundBackdrop),
-        rememberCrossWindowBackdrop(playerContentBackdrop),
-        rememberCrossWindowBackdrop(playerCoverBackdrop),
+        rememberRasterizedPlayerBackdrop(playerBackgroundBackdrop),
+        rememberRasterizedPlayerBackdrop(playerContentBackdrop),
+        rememberRasterizedPlayerBackdrop(playerCoverBackdrop),
     )
 
     // 获取播放器样式

@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastCoerceAtMost
 import androidx.compose.ui.util.lerp
@@ -169,6 +170,12 @@ private class NavigationGlassBoxShadowNode(
     private var sideLayer: GraphicsLayer? = null
     private var outlineLayer: GraphicsLayer? = null
     private val layerScope = GraphicsLayerBlockScope()
+    private var recordedSize = Size.Unspecified
+    private var recordedShape: Shape? = null
+    private var recordedAlpha = Float.NaN
+    private var recordedDensity = Float.NaN
+    private var recordedFontScale = Float.NaN
+    private var recordedLayoutDirection: LayoutDirection? = null
 
     private val sidePaint = Paint().apply {
         style = PaintingStyle.Fill
@@ -197,38 +204,54 @@ private class NavigationGlassBoxShadowNode(
             ceil(size.width).toInt() + padding * 2,
             ceil(size.height).toInt() + padding * 2,
         )
-        val outline = shape().createOutline(size, layoutDirection, this)
+        val currentShape = shape()
+        if (recordedSize != size || recordedShape != currentShape || recordedAlpha != shadowAlpha ||
+            recordedDensity != density || recordedFontScale != fontScale ||
+            recordedLayoutDirection != layoutDirection
+        ) {
+            val outline = currentShape.createOutline(size, layoutDirection, this)
 
-        sidePaint.color = Color(0xFF3F3F3F).copy(alpha = shadowAlpha)
-        outlinePaint.color = Color(0xFF6E6E6E).copy(alpha = shadowAlpha)
-        outlinePaint.strokeWidth = outlineWidth
+            sidePaint.color = Color(0xFF3F3F3F).copy(alpha = shadowAlpha)
+            outlinePaint.color = Color(0xFF6E6E6E).copy(alpha = shadowAlpha)
+            outlinePaint.strokeWidth = outlineWidth
 
-        // The side shadow is a horizontally expanded copy of the shape. Its height stays
-        // exactly the element height, so it cannot create a shadow line on the top or bottom.
-        // Clearing the original shape leaves only the two exposed side capsules.
-        sideLayer.record(layerSize) {
-            translate(padding.toFloat(), padding.toFloat()) {
-                drawContext.canvas.save()
-                drawContext.canvas.translate(size.width / 2f, 0f)
-                drawContext.canvas.scale(
-                    (size.width + sideOffset * 2f) / size.width,
-                    1f,
-                )
-                drawContext.canvas.translate(-size.width / 2f, 0f)
-                drawContext.canvas.drawOutline(outline, sidePaint)
-                drawContext.canvas.restore()
-                drawContext.canvas.drawOutline(outline, clearPaint)
+            // The side shadow is a horizontally expanded copy of the shape. Its height stays
+            // exactly the element height, so it cannot create a shadow line on the top or bottom.
+            // Clearing the original shape leaves only the two exposed side capsules.
+            sideLayer.record(layerSize) {
+                translate(padding.toFloat(), padding.toFloat()) {
+                    drawContext.canvas.save()
+                    drawContext.canvas.translate(size.width / 2f, 0f)
+                    drawContext.canvas.scale(
+                        (size.width + sideOffset * 2f) / size.width,
+                        1f,
+                    )
+                    drawContext.canvas.translate(-size.width / 2f, 0f)
+                    drawContext.canvas.drawOutline(outline, sidePaint)
+                    drawContext.canvas.restore()
+                    drawContext.canvas.drawOutline(outline, clearPaint)
+                }
             }
-        }
 
-        outlineLayer.record(layerSize) {
-            translate(padding.toFloat(), padding.toFloat()) {
-                drawContext.canvas.drawOutline(outline, outlinePaint)
+            outlineLayer.record(layerSize) {
+                translate(padding.toFloat(), padding.toFloat()) {
+                    drawContext.canvas.drawOutline(outline, outlinePaint)
 
-                // Keep only the part of the outline that is outside the glass. This makes the
-                // border an outer stroke instead of an inset stroke.
-                drawContext.canvas.drawOutline(outline, clearPaint)
+                    // Keep only the part of the outline that is outside the glass. This makes the
+                    // border an outer stroke instead of an inset stroke.
+                    drawContext.canvas.drawOutline(outline, clearPaint)
+                }
             }
+
+            // A modal moves in window space while this local outline remains unchanged.
+            // Reuse the two offscreen border textures instead of clearing/rasterizing two
+            // screen-sized buffers on every animation frame. Press transforms stay live below.
+            recordedSize = size
+            recordedShape = currentShape
+            recordedAlpha = shadowAlpha
+            recordedDensity = density
+            recordedFontScale = fontScale
+            recordedLayoutDirection = layoutDirection
         }
 
         // The outer layers are separate from drawBackdrop's own graphics layer, so apply the
@@ -273,6 +296,7 @@ private class NavigationGlassBoxShadowNode(
     }
 
     override fun onAttach() {
+        recordedShape = null
         sideLayer = requireGraphicsContext().createGraphicsLayer().apply {
             compositingStrategy = CompositingStrategy.Offscreen
         }

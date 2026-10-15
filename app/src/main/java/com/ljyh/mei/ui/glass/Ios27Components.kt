@@ -1683,6 +1683,7 @@ fun IosSheetSurface(
     // lives in the app window, so sample it with window-space coordinates. The library's
     // localPositionOf mapping cannot cross compose owners and silently sampled nothing.
     val samplingBackdrop = rememberCrossWindowBackdrop(backdrop)
+    val backdropRenderer = rememberSheetBackdropRenderer(samplingBackdrop, if (isLight) 16.dp else 12.dp)
     Box(
         modifier
             .fillMaxWidth()
@@ -1692,11 +1693,9 @@ fun IosSheetSurface(
                     layerBlock = sheetLayerBlock,
                 )
                 .drawBackdrop(
-                    backdrop = samplingBackdrop,
+                    backdrop = backdropRenderer,
                     shape = { shape },
-                    effects = {
-                        blur(if (isLight) 16.dp.toPx() else 12.dp.toPx())
-                    },
+                    effects = {},
                     highlight = { Highlight.Default.copy(alpha = if (isLight) 0.58f else 0.38f) },
                     shadow = { Shadow(radius = 48.dp, alpha = 0.25f) },
                     innerShadow = { InnerShadow(radius = 8.dp, alpha = 0.12f) },

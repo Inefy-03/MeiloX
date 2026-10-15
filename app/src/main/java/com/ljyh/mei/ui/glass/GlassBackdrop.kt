@@ -186,6 +186,15 @@ fun rememberCrossWindowBackdrop(backdrop: Backdrop): Backdrop = remember(backdro
     if (backdrop is LayerBackdrop) CrossWindowBackdrop(backdrop) else backdrop
 }
 
+/** Share a live, flattened player source between modal glass and its small glass controls. */
+@Composable
+fun rememberRasterizedPlayerBackdrop(source: LayerBackdrop): Backdrop {
+    val rasterized = rememberGraphicsLayer()
+    return remember(source, rasterized) {
+        CrossWindowBackdrop(source, rasterized, renderScale = 0.25f)
+    }
+}
+
 /**
  * Share rasterized page regions between glass consumers instead of replaying the display
  * list (including nested blur and navigation layers) for every lens. This is a live layer
