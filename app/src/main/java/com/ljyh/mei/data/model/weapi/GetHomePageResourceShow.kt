@@ -33,7 +33,8 @@ data class GetHomePageResourceShow(
     @SerializedName("ruleJson") val ruleJson: String,
     @SerializedName("algDemoteBlockCodeOrderList") val algDemoteBlockCodeOrderList: String,
     @SerializedName("header") val header: String,
-    @SerializedName("e_r") val eR: Boolean
+    @SerializedName("e_r") val eR: Boolean,
+    @SerializedName("blockCodeOrderList") val blockCodeOrderList: String? = null,
 )
 
 /* ==========================
@@ -110,14 +111,8 @@ private object DefaultBuilder {
     const val WIDTH_DP = "1080"
     const val HEIGHT_DP = "1920"
     const val LOADED_POSITION_CODES = ""
-    var CLIENT_CACHE_BLOCK_CODE: String = Gson().toJson(
-        listOf(
-            "PAGE_RECOMMEND_RADAR",
-            "PAGE_RECOMMEND_SPECIAL_CLOUD_VILLAGE_PLAYLIST",
-            "PAGE_RECOMMEND_RED_SIMILAR_SONG",
-            "PAGE_RECOMMEND_DAILY_RECOMMEND"
-        )
-    )
+    // Full-feed caching does not provide the separate module cache used by the official client.
+    const val CLIENT_CACHE_BLOCK_CODE = "[]"
     const val CALLBACK_PARAMETERS = ""
     const val EXT_JSON =
         """{"fmName":{"fmTitle":"漫游","fmLongTitle":"私人漫游"},"currentExploreHomeType":"main","homeFrameworkType":"fastPlay","latitude":"4.9E-324","homeReqSource":"home","adSceneExt":"","clientLibraAbTest":{"similarFmNameTest0422":"c","fmNameTest0422":"c"},"network":"wifi","carrier":"","forceFreshForNewUser":false,"bluetooth":false,"requestLongVideoBanner":true,"currentNewUserExploreHomeType":"main","longitude":"4.9E-324","refreshAction":"init","firstRequestPerLaunch":true,"clientMobileSize":"{\"width\":720,\"length\":1475}","noteHomeType":"note"}"""

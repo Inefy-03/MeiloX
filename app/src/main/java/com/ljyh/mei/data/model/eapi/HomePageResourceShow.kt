@@ -18,7 +18,7 @@ data class HomePageResourceShow(
         @SerializedName("cursor")
         val cursor: Int,
         @SerializedName("blockCodeOrderList")
-        val blockCodeOrderList: Any,
+        val blockCodeOrderList: Any?,
         @SerializedName("requestBlockOrder")
         val requestBlockOrder: Any,
         @SerializedName("callbackParameters")

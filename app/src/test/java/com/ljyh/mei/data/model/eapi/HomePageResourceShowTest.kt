@@ -4,9 +4,16 @@ import com.google.gson.Gson
 import com.google.gson.JsonElement
 import com.google.gson.JsonParser
 import com.google.gson.reflect.TypeToken
+import com.ljyh.mei.data.model.weapi.GetHomePageResourceShow
+import com.ljyh.mei.data.repository.loadHomePageBlocks
+import java.io.IOException
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 class HomePageResourceShowTest {
@@ -67,6 +74,156 @@ class HomePageResourceShowTest {
         assertNull(restored[6].dslData)
         assertTrue(restored[10].dslData!!.isJsonArray)
     }
+
+    @Test
+    fun mobileFeedLoadsRemainingModulesWithTheServerContinuation() = runBlocking {
+        val calls = mutableListOf<GetHomePageResourceShow>()
+        val pages = listOf(
+            page(listOf("DAILY"), 10, listOf("RADAR", "RANK", "PLAYLIST"), "page-two"),
+            page(listOf("DAILY", "RADAR", "RANK"), 17, listOf("PLAYLIST"), "page-three"),
+            page(listOf("PLAYLIST"), 19, emptyList()),
+        )
+        val result = loadHomePageBlocks(initialRequest()) { request ->
+            calls += request
+            pages[calls.lastIndex]
+        }
+
+        assertEquals(listOf("DAILY", "RADAR", "RANK", "PLAYLIST"), result.map { it.positionCode })
+        assertEquals(listOf("0", "10", "17"), calls.map { it.cursor })
+        assertNull(calls.first().blockCodeOrderList)
+        assertEquals(listOf("true", "false", "false"), calls.map { it.isFirstScreen })
+        assertEquals(listOf("true", "false", "false"), calls.map { it.refresh })
+        assertEquals("[\"RADAR\",\"RANK\",\"PLAYLIST\"]", calls[1].blockCodeOrderList)
+        assertEquals("[\"PLAYLIST\"]", calls[2].blockCodeOrderList)
+        assertEquals("[\"DAILY\"]", calls[1].loadedPositionCodes)
+        assertEquals("[\"DAILY\",\"RADAR\",\"RANK\"]", calls[2].loadedPositionCodes)
+        assertEquals("page-two", calls[1].callbackParameters)
+        assertEquals("page-three", calls[2].callbackParameters)
+        val continuationJson = gson.toJsonTree(calls[1]).asJsonObject
+        assertEquals(calls[1].blockCodeOrderList, continuationJson["blockCodeOrderList"].asString)
+        calls.drop(1).forEach { request ->
+            val ext = JsonParser.parseString(request.extJson).asJsonObject
+            assertEquals("loadMore", ext["refreshAction"].asString)
+            assertEquals(false, ext["firstRequestPerLaunch"].asBoolean)
+            assertEquals("fastPlay", ext["homeFrameworkType"].asString)
+            assertEquals("{}", request.ruleJson)
+        }
+    }
+
+    @Test
+    fun completeFeedDoesNotRequestAnExtraPage() = runBlocking {
+        var calls = 0
+        val result = loadHomePageBlocks(initialRequest()) {
+            calls++
+            page(listOf("DAILY", "RADAR", "RANK"), 17, emptyList())
+        }
+        assertEquals(1, calls)
+        assertEquals(3, result.size)
+    }
+
+    @Test
+    fun missingOrInvalidContinuationDoesNotPublishAPartialFeed() = runBlocking {
+        for (order in listOf(null, "", "[]", "{}", "[42]")) {
+            var calls = 0
+            try {
+                loadHomePageBlocks(initialRequest()) {
+                    calls++
+                    page(listOf("DAILY"), 10, listOf("RADAR"), blockOrder = order)
+                }
+                fail("An incomplete feed must carry a valid block order")
+            } catch (expected: IOException) {
+                assertEquals("Home pagination is missing its block order", expected.message)
+            }
+            assertEquals(1, calls)
+        }
+    }
+
+    @Test
+    fun repeatedContinuationStopsBeforeFetchingTheSamePageAgain() = runBlocking {
+        var calls = 0
+        try {
+            loadHomePageBlocks(initialRequest()) {
+                calls++
+                page(listOf("DAILY"), 10, listOf("RADAR"))
+            }
+            fail("A repeated continuation must fail")
+        } catch (expected: IOException) {
+            assertEquals("Home pagination did not advance", expected.message)
+        }
+        assertEquals(2, calls)
+    }
+
+    @Test
+    fun laterPageFailureAndCancellationPropagateWithoutReturningEarlierBlocks() = runBlocking {
+        for (failure in listOf(IOException("Offline"), CancellationException("Cancelled"))) {
+            var calls = 0
+            try {
+                loadHomePageBlocks(initialRequest()) {
+                    if (calls++ == 0) page(listOf("DAILY"), 10, listOf("RADAR"))
+                    else throw failure
+                }
+                fail("A later page failure must propagate")
+            } catch (actual: Exception) {
+                assertSame(failure, actual)
+            }
+            assertEquals(2, calls)
+        }
+
+        var calls = 0
+        try {
+            loadHomePageBlocks(initialRequest()) {
+                if (calls++ == 0) page(listOf("DAILY"), 10, listOf("RADAR"))
+                else gson.fromJson("""{"code":500}""", HomePageResourceShow::class.java)
+            }
+            fail("An unsuccessful business response must fail")
+        } catch (expected: IOException) {
+            assertEquals("Home request failed (500)", expected.message)
+        }
+        assertEquals(2, calls)
+    }
+
+    private fun initialRequest() = GetHomePageResourceShow(
+        pageCode = "HOME_RECOMMEND_PAGE",
+        isFirstScreen = "true",
+        cursor = "0",
+        refresh = "true",
+        widthDp = "400",
+        heightDp = "800",
+        loadedPositionCodes = "",
+        clientCacheBlockCode = "[]",
+        callbackParameters = "",
+        extJson = """{"homeFrameworkType":"fastPlay","refreshAction":"init","firstRequestPerLaunch":true}""",
+        pageStyleType = "cutBlock",
+        adExtJson = "{}",
+        reqTimeStamp = "1",
+        clientTime = "2026-10-15 12:00:00",
+        ruleJson = "{}",
+        algDemoteBlockCodeOrderList = "[]",
+        header = "{}",
+        eR = true,
+    )
+
+    private fun page(
+        positions: List<String>,
+        cursor: Int,
+        remaining: List<String>,
+        callback: String = "",
+        blockOrder: Any? = gson.toJson(remaining),
+    ): HomePageResourceShow = gson.fromJson(
+        gson.toJson(
+            mapOf(
+                "code" to 200,
+                "data" to mapOf(
+                    "blocks" to positions.map { mapOf("positionCode" to it) },
+                    "cursor" to cursor,
+                    "hasMore" to remaining.isNotEmpty(),
+                    "blockCodeOrderList" to blockOrder,
+                    "callbackParameters" to callback,
+                ),
+            ),
+        ),
+        HomePageResourceShow::class.java,
+    )
 
     private fun parseResponse(optionalDslField: String): HomePageResourceShow {
         val optionalFields = optionalDslField.takeIf { it.isNotEmpty() }?.let { ",$it" }.orEmpty()

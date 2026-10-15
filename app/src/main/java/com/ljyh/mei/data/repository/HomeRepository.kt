@@ -29,11 +29,12 @@ class HomeRepository(private val eApiService: EApiService, private val apiServic
         safeApiCall {
             if (refresh || isNewDay(getLastFetchTime(context))) {
                 Timber.tag("getHomePageResourceShow").d("Fetching home page")
-                val page = eApiService.getHomePageResourceShow(
-                    buildGetHomePageResourceShow(refresh = refresh.toString())
+                val blocks = loadHomePageBlocks(
+                    buildGetHomePageResourceShow(refresh = refresh.toString()),
+                    eApiService::getHomePageResourceShow,
                 )
-                saveLastHomePage(context, 1, page.data.blocks)
-                page.data.blocks
+                saveLastHomePage(context, 1, blocks)
+                blocks
             } else {
                 Timber.tag("getHomePageResourceShow").d("Loading cached home page")
                 getLastHomePage(context, 1)
