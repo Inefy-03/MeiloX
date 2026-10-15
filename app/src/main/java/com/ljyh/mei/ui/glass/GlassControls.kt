@@ -253,7 +253,8 @@ fun GlassSlider(
     BoxWithConstraints(
         modifier
             .fillMaxWidth()
-            .height(44.dp)
+            .height(40.dp)
+            .offset(y = 6.dp)
             .progressSemantics(displayedValue, valueRange)
             .semantics {
                 if (!enabled) disabled()

@@ -67,7 +67,6 @@ import com.ljyh.mei.constants.RecommendCardHeight
 import com.ljyh.mei.constants.RecommendCardHeightTablet
 import com.ljyh.mei.constants.RecommendCardWidth
 import com.ljyh.mei.constants.RecommendCardWidthTablet
-import com.ljyh.mei.constants.UserIdKey
 import com.ljyh.mei.data.model.MediaMetadata
 import com.ljyh.mei.data.model.eapi.HomePageResourceShow
 import com.ljyh.mei.data.model.toMediaItem
@@ -91,7 +90,6 @@ import com.ljyh.mei.ui.local.LocalPlayerConnection
 import com.ljyh.mei.ui.screen.Screen
 import com.ljyh.mei.utils.DateUtils.getGreeting
 import com.ljyh.mei.utils.positionComparator
-import com.ljyh.mei.utils.rememberPreference
 import java.util.UUID
 import kotlin.math.ceil
 import kotlinx.coroutines.CancellationException
@@ -116,7 +114,6 @@ fun HomeScreen(
     val listState = rememberLazyListState()
 
     val homePageResourceShowPage1 by viewModel.homePageResourceShow.collectAsState()
-    val userId by rememberPreference(UserIdKey, "")
     val isRefreshing by remember { mutableStateOf(false) }
     val device = rememberDeviceInfo()
     val glassColors = LocalGlassColors.current
@@ -171,10 +168,6 @@ fun HomeScreen(
             listState.animateScrollToItem(0)
             backStackEntry?.savedStateHandle?.set("scrollToTop", false)
         }
-    }
-
-    LaunchedEffect(userId) {
-        viewModel.homePageResourceShow()
     }
 
     val systemBarsPadding = LocalPlayerAwareWindowInsets.current.asPaddingValues()
