@@ -17,6 +17,8 @@ internal fun MediaMetadata.toSystemLyricSong(data: LyricData?): Song {
         it.isPureMusic || it.source == LyricSource.Empty || it.source == LyricSource.Loading
     }?.lyricLine?.lines.orEmpty().sortedBy { it.start }
     val richLines = lines.mapIndexedNotNull { index, line ->
+        // Expired negative-time credits must not expand into song-long overlapping lines.
+        if (line.start < 0 && line.end <= 0) return@mapIndexedNotNull null
         val karaoke = line as? KaraokeLine
         val plain = line as? SyncedLine
         val text = karaoke?.syllables?.joinToString("") { it.content } ?: plain?.content
