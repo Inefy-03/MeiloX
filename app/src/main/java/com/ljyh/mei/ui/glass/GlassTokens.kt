@@ -1,19 +1,15 @@
 package com.ljyh.mei.ui.glass
 
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.Font
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.ljyh.mei.R
-import com.ljyh.mei.ui.theme.LocalInterfaceLetterSpacing
+import com.ljyh.mei.ui.theme.AppFontFamily
 
 @Immutable
 data class GlassColors(
@@ -44,73 +40,33 @@ data class GlassDimensions(
 internal val GlassColors.segmentedControlBackground: Color
     get() = if (isDark) Color.White.copy(alpha = 0.12f) else Color(0x1F767680)
 
-/** iOS/iPadOS 27 typography tokens with configurable interface letter spacing. */
+/** iOS names for the shared application typography roles. */
 object IosTypography {
-    val fontFamily = FontFamily(Font(R.font.sf_pro, FontWeight.Normal))
+    val fontFamily = AppFontFamily
     val largeTitle: TextStyle
         @Composable
         @ReadOnlyComposable
-        get() = TextStyle(
-            fontFamily = fontFamily,
-            fontWeight = FontWeight.Bold,
-            fontSize = 34.sp,
-            lineHeight = 41.sp,
-            letterSpacing = LocalInterfaceLetterSpacing.current,
-//        letterSpacing = 0.4.sp,
-        )
+        get() = MaterialTheme.typography.headlineLarge
     val title2: TextStyle
         @Composable
         @ReadOnlyComposable
-        get() = TextStyle(
-            fontFamily = fontFamily,
-            fontWeight = FontWeight.Bold,
-            fontSize = 22.sp,
-            lineHeight = 28.sp,
-            letterSpacing = LocalInterfaceLetterSpacing.current,
-        )
+        get() = MaterialTheme.typography.headlineSmall
     val headline: TextStyle
         @Composable
         @ReadOnlyComposable
-        get() = TextStyle(
-            fontFamily = fontFamily,
-            fontWeight = FontWeight.SemiBold,
-            fontSize = 17.sp,
-            lineHeight = 22.sp,
-            letterSpacing = LocalInterfaceLetterSpacing.current,
-//        letterSpacing = (-0.43).sp,
-        )
+        get() = MaterialTheme.typography.titleMedium
     val body: TextStyle
         @Composable
         @ReadOnlyComposable
-        get() = TextStyle(
-            fontFamily = fontFamily,
-            fontWeight = FontWeight.Normal,
-            fontSize = 17.sp,
-            lineHeight = 22.sp,
-            letterSpacing = LocalInterfaceLetterSpacing.current,
-//        letterSpacing = (-0.43).sp,
-        )
+        get() = MaterialTheme.typography.bodyLarge
     val subheadline: TextStyle
         @Composable
         @ReadOnlyComposable
-        get() = TextStyle(
-            fontFamily = fontFamily,
-            fontWeight = FontWeight.Normal,
-            fontSize = 15.sp,
-            lineHeight = 20.sp,
-            letterSpacing = LocalInterfaceLetterSpacing.current,
-//        letterSpacing = (-0.23).sp,
-        )
+        get() = MaterialTheme.typography.bodyMedium
     val caption: TextStyle
         @Composable
         @ReadOnlyComposable
-        get() = TextStyle(
-            fontFamily = fontFamily,
-            fontWeight = FontWeight.Medium,
-            fontSize = 12.sp,
-            lineHeight = 16.sp,
-            letterSpacing = LocalInterfaceLetterSpacing.current,
-        )
+        get() = MaterialTheme.typography.labelMedium
 }
 
 val LocalGlassColors = staticCompositionLocalOf {

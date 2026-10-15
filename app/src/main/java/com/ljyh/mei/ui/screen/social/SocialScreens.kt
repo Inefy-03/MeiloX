@@ -410,7 +410,6 @@ fun ConversationScreen(userId: Long, viewModel: ConversationViewModel = hiltView
                                     color = if (outgoing || LocalGlassColors.current.isDark && !outgoing) Color.White else Color.Black,
                                     fontSize = 15.sp,
                                     lineHeight = 18.sp,
-                                    letterSpacing = 0.6.sp,
                                 ),
                                 modifier = Modifier.padding(top = if (message.payload.resource == null) 0.dp else 8.dp),
                             )

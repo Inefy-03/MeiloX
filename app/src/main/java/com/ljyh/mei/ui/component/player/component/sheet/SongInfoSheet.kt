@@ -28,7 +28,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -117,7 +116,6 @@ fun SongInfoSheet(
             InfoItem(
                 label = "歌曲 ID",
                 value = metadata.id.toString(),
-                monospace = true,
                 onCopy = { setClipboard(context, metadata.id.toString(), "歌曲 ID") }
             )
             InfoItem(
@@ -142,7 +140,6 @@ fun SongInfoSheet(
                 InfoItem(
                     label = "QQ 歌曲 ID",
                     value = qqSongId,
-                    monospace = true,
                     onCopy = { setClipboard(context, qqSongId, "QQ 歌曲 ID") }
                 )
             }
@@ -161,7 +158,6 @@ fun SongInfoSheet(
                 InfoItem(
                     label = "歌手 ID",
                     value = artist.id.toString(),
-                    monospace = true,
                     onCopy = { setClipboard(context, artist.id.toString(), "歌手 ID") }
                 )
             }
@@ -179,7 +175,6 @@ fun SongInfoSheet(
             InfoItem(
                 label = "专辑 ID",
                 value = metadata.album.id.toString(),
-                monospace = true,
                 onCopy = { setClipboard(context, metadata.album.id.toString(), "专辑 ID") }
             )
 
@@ -216,11 +211,8 @@ private fun SectionLabel(text: String) {
 private fun InfoItem(
     label: String,
     value: String,
-    monospace: Boolean = false,
     onCopy: () -> Unit
 ) {
-    val valueFontFamily = if (monospace) FontFamily.Monospace else FontFamily.Default
-
     ListItem(
         headlineContent = {
             Text(
@@ -233,7 +225,6 @@ private fun InfoItem(
             Text(
                 text = value,
                 style = MaterialTheme.typography.bodyMedium,
-                fontFamily = valueFontFamily,
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 3,
                 overflow = TextOverflow.Ellipsis,

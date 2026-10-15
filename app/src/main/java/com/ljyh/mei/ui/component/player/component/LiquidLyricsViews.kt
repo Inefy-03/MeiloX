@@ -246,7 +246,14 @@ private fun TextPvLiquidLyrics(
                 }
             }
         }
-        Text("◆  ◇  ◆", color = Color.White.copy(.45f), letterSpacing = 7.sp, modifier = Modifier.align(Alignment.BottomStart))
+        Row(
+            modifier = Modifier.align(Alignment.BottomStart),
+            horizontalArrangement = Arrangement.spacedBy(28.dp),
+        ) {
+            listOf("◆", "◇", "◆").forEach { symbol ->
+                Text(symbol, color = Color.White.copy(.45f))
+            }
+        }
     }
 }
 

@@ -42,6 +42,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -134,15 +135,21 @@ internal fun PlayerLyricsView(
     val stableBlendMode = remember(blendMode) { blendMode }
 
     val textMeasurer = rememberTextMeasurer()
-    val layoutCache = remember { mutableStateMapOf<Int, List<SyllableLayout>>() }
+    val layoutCache = remember(
+        lyrics,
+        stableNormalTextStyle,
+        stableAccompanimentTextStyle,
+        stablePhoneticTextStyle,
+        textMeasurer
+    ) { mutableStateMapOf<Int, List<SyllableLayout>>() }
 
     LaunchedEffect(
         lyrics,
         stableNormalTextStyle,
         stableAccompanimentTextStyle,
-        stablePhoneticTextStyle
+        stablePhoneticTextStyle,
+        textMeasurer
     ) {
-        layoutCache.clear()
         withContext(Dispatchers.Default) {
             val normalStyle = stableNormalTextStyle.copy(textDirection = TextDirection.Content)
             val accompanimentStyle =
@@ -411,19 +418,30 @@ internal fun PlayerLyricsView(
                                             blurRadius = { blurRadiusState.value },
                                             blendMode = stableBlendMode,
                                         ) {
-                                            KaraokeLineText(
-                                                line = line,
-                                                currentTimeProvider = timeProvider,
-                                                normalLineTextStyle = stableNormalTextStyle,
-                                                accompanimentLineTextStyle = stableAccompanimentTextStyle,
-                                                phoneticTextStyle = stablePhoneticTextStyle,
-                                                activeColor = textColor,
-                                                blendMode = stableBlendMode,
-                                                showDebugRectangles = showDebugRectangles,
-                                                showTranslation = showTranslation,
-                                                showPhonetic = showPhonetic,
-                                                precalculatedLayouts = layoutCache[index]
-                                            )
+                                            val precalculatedLayouts = layoutCache[index]
+                                            // The upstream renderer remembers styles and wrapping without all inputs.
+                                            key(
+                                                stableNormalTextStyle,
+                                                stableAccompanimentTextStyle,
+                                                stablePhoneticTextStyle,
+                                                textMeasurer,
+                                                precalculatedLayouts
+                                            ) {
+                                                KaraokeLineText(
+                                                    line = line,
+                                                    currentTimeProvider = timeProvider,
+                                                    normalLineTextStyle = stableNormalTextStyle,
+                                                    accompanimentLineTextStyle = stableAccompanimentTextStyle,
+                                                    phoneticTextStyle = stablePhoneticTextStyle,
+                                                    activeColor = textColor,
+                                                    blendMode = stableBlendMode,
+                                                    showDebugRectangles = showDebugRectangles,
+                                                    showTranslation = showTranslation,
+                                                    showPhonetic = showPhonetic,
+                                                    precalculatedLayouts = precalculatedLayouts,
+                                                    textMeasurer = textMeasurer
+                                                )
+                                            }
                                         }
                                     }
                                 }

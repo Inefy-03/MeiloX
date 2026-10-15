@@ -7,7 +7,6 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
-import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
@@ -17,14 +16,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.Font
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kyant.capsule.ContinuousRoundedRectangle
-import com.ljyh.mei.R
 import com.ljyh.mei.constants.DefaultInterfaceLetterSpacing
 import com.ljyh.mei.constants.InterfaceLetterSpacingKey
 import com.ljyh.mei.utils.rememberPreference
@@ -32,8 +26,6 @@ import com.ljyh.mei.utils.rememberPreference
 /** Raw custom or dynamic accent; null selects the current mode's default accent. */
 val LocalAccentSeedColor = staticCompositionLocalOf<Color?> { null }
 val LocalInterfaceLetterSpacing = compositionLocalOf { DefaultInterfaceLetterSpacing.sp }
-
-private val SfProFamily = FontFamily(Font(R.font.sf_pro, FontWeight.Normal))
 
 private val AppShapes = Shapes(
     extraSmall = ContinuousRoundedRectangle(2.dp),
@@ -44,29 +36,6 @@ private val AppShapes = Shapes(
 )
 
 
-private val AppTypography = Typography(
-    displayLarge = TextStyle(fontFamily = SfProFamily, letterSpacing = 1.sp),
-    displayMedium = TextStyle(fontFamily = SfProFamily, letterSpacing = 1.sp),
-    displaySmall = TextStyle(fontFamily = SfProFamily, letterSpacing = 1.sp),
-    headlineLarge = TextStyle(fontFamily = SfProFamily, fontWeight = FontWeight.Bold, fontSize = 34.sp, lineHeight = 41.sp, letterSpacing = 1.sp),
-    headlineMedium = TextStyle(fontFamily = SfProFamily, fontWeight = FontWeight.Bold, fontSize = 28.sp, lineHeight = 34.sp, letterSpacing = 1.sp),
-    headlineSmall = TextStyle(fontFamily = SfProFamily, fontWeight = FontWeight.Bold, fontSize = 22.sp, lineHeight = 28.sp, letterSpacing = 1.sp),
-    titleLarge = TextStyle(fontFamily = SfProFamily, fontWeight = FontWeight.SemiBold, fontSize = 20.sp, lineHeight = 25.sp, letterSpacing = 1.sp),
-    titleMedium = TextStyle(fontFamily = SfProFamily, fontWeight = FontWeight.SemiBold, fontSize = 17.sp, lineHeight = 22.sp, letterSpacing = 1.sp),
-    titleSmall = TextStyle(fontFamily = SfProFamily, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, lineHeight = 20.sp, letterSpacing = 1.sp),
-    bodyLarge = TextStyle(fontFamily = SfProFamily, fontWeight = FontWeight.Normal, fontSize = 17.sp, lineHeight = 22.sp, letterSpacing = 1.sp),
-    bodyMedium = TextStyle(
-        fontFamily = SfProFamily,
-        fontWeight = FontWeight.Normal,
-        fontSize = 15.sp,
-        lineHeight = 20.sp,
-        letterSpacing = DefaultInterfaceLetterSpacing.sp,
-    ),
-    bodySmall = TextStyle(fontFamily = SfProFamily, fontWeight = FontWeight.Normal, fontSize = 13.sp, lineHeight = 18.sp, letterSpacing = 1.sp),
-    labelLarge = TextStyle(fontFamily = SfProFamily, fontWeight = FontWeight.SemiBold, fontSize = 17.sp, lineHeight = 22.sp, letterSpacing = 1.sp),
-    labelMedium = TextStyle(fontFamily = SfProFamily, fontWeight = FontWeight.Medium, fontSize = 12.sp, lineHeight = 16.sp, letterSpacing = 1.sp),
-    labelSmall = TextStyle(fontFamily = SfProFamily, fontWeight = FontWeight.Medium, fontSize = 10.sp, lineHeight = 12.sp, letterSpacing = 1.sp),
-)
 @Composable
 fun MusicTheme(
     seedColor: Color,
@@ -76,9 +45,7 @@ fun MusicTheme(
     val savedLetterSpacing by rememberPreference(InterfaceLetterSpacingKey, LocalInterfaceLetterSpacing.current.value)
     val letterSpacing = (savedLetterSpacing.takeIf { it.isFinite() }
         ?: DefaultInterfaceLetterSpacing).coerceIn(0f, 3f).sp
-    val typography = remember(letterSpacing) {
-        AppTypography.copy(bodyMedium = AppTypography.bodyMedium.copy(letterSpacing = letterSpacing))
-    }
+    val typography = remember(letterSpacing) { appTypography(letterSpacing) }
     val accent by animateColorAsState(seedColor, tween(600), label = "iOS accent")
     val colorScheme = if (isDark) {
         darkColorScheme(
@@ -126,10 +93,7 @@ fun MusicTheme(
         CompositionLocalProvider(
             LocalInterfaceLetterSpacing provides letterSpacing,
             LocalContentColor provides colorScheme.onBackground,
-            // Global default for Text() without an explicit style. Must stay a full
-            // typography style: a bare TextStyle would fall back to the 14sp default
-            // font size. bodyLarge carries the 1.sp tracking from AppTypography.
-            LocalTextStyle provides AppTypography.bodyLarge,
+            LocalTextStyle provides typography.bodyLarge,
             content = content,
         )
     }

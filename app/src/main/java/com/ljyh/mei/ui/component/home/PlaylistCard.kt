@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.filled.Headset
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -24,10 +25,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
@@ -92,7 +93,7 @@ fun PlaylistCard(
                         fontSize = 11.sp,
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
-                        style = TextStyle(shadow = textShadow, letterSpacing = 1.sp)
+                        style = LocalTextStyle.current.copy(lineHeight = TextUnit.Unspecified, shadow = textShadow)
                     )
                 }
             }
@@ -110,7 +111,7 @@ fun PlaylistCard(
                             fontSize = 11.sp,
                             color = Color.White,
                             fontWeight = FontWeight.Medium,
-                            style = TextStyle(shadow = textShadow, letterSpacing = 1.sp)
+                            style = LocalTextStyle.current.copy(lineHeight = TextUnit.Unspecified, shadow = textShadow)
                         )
                     }
                 }
