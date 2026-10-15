@@ -1,7 +1,10 @@
 package com.ljyh.mei.ui.screen.main.library
 
+import com.ljyh.mei.constants.LibraryStyle
 import com.ljyh.mei.data.repository.LibraryAccount
 import com.ljyh.mei.data.repository.LibraryCollectionPage
+import com.ljyh.mei.ui.navigation.ContentFeature
+import com.ljyh.mei.ui.navigation.LibraryPage
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -10,6 +13,38 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LibraryCollectionsTest {
+    @Test
+    fun defaultPageUsesTheMergedAlbumPageOnlyForTheDefaultStyle() {
+        val enabledFeatures = ContentFeature.entries.toSet()
+        LibraryPage.entries.forEach { page ->
+            assertEquals(
+                page,
+                resolveLibraryDefaultPage(page.name, LibraryStyle.AppleMusic, enabledFeatures),
+            )
+            assertEquals(
+                if (page == LibraryPage.Podcasts) LibraryPage.Albums else page,
+                resolveLibraryDefaultPage(page.name, LibraryStyle.Default, enabledFeatures),
+            )
+        }
+    }
+
+    @Test
+    fun emptyUnknownAndDisabledDefaultPagesKeepTheStandardEntry() {
+        val enabledFeatures = ContentFeature.entries.toSet()
+        LibraryStyle.entries.forEach { style ->
+            listOf("", "removed-page").forEach { value ->
+                assertNull(resolveLibraryDefaultPage(value, style, enabledFeatures))
+            }
+            LibraryPage.entries.forEach { page ->
+                page.requiredFeature?.let { feature ->
+                    assertNull(
+                        resolveLibraryDefaultPage(page.name, style, enabledFeatures - feature),
+                    )
+                }
+            }
+        }
+    }
+
     @Test
     fun overlappingPagesKeepServerOrderAndAdvanceByRawOffset() {
         val first = LibraryCollectionState<String>().append(

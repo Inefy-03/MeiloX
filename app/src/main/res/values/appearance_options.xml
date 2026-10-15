@@ -7,4 +7,5 @@
     <string name="appearance_liquid_glass_description">Use light refraction and fluid glass effects. Turn off for frosted glass.</string>
     <string name="appearance_reduce_transparency">Reduce transparency</string>
     <string name="appearance_reduce_transparency_description">Use opaque backgrounds for clearer controls and text.</string>
+    <string name="appearance_library_default_page">Default page</string>
 </resources>

@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -15,6 +16,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -22,12 +24,15 @@ import com.ljyh.mei.ui.navigation.MeiNavigator
 import com.ljyh.mei.R
 import androidx.compose.ui.graphics.Color
 import com.ljyh.mei.constants.LibraryStyle
+import com.ljyh.mei.constants.LibraryDefaultPageKey
 import com.ljyh.mei.constants.LibraryStyleKey
-import com.ljyh.mei.utils.rememberEnumPreference
 import com.ljyh.mei.ui.glass.IosListRow
 import com.ljyh.mei.ui.glass.LocalGlassColors
 import com.ljyh.mei.ui.glass.SfIcon
 import com.ljyh.mei.constants.CookieKey
+import com.ljyh.mei.constants.CloudMusicEnabledKey
+import com.ljyh.mei.constants.DownloadsEnabledKey
+import com.ljyh.mei.constants.ListeningHistoryEnabledKey
 import com.ljyh.mei.constants.PodcastsEnabledKey
 import com.ljyh.mei.constants.UserIdKey
 import com.ljyh.mei.ui.local.LocalNavController
@@ -37,7 +42,21 @@ import com.ljyh.mei.ui.component.GlobalProfileAvatarButton
 import com.ljyh.mei.ui.glass.IosPinnedListPage
 import com.ljyh.mei.ui.screen.main.library.component.LibraryMobileLayout
 import com.ljyh.mei.ui.navigation.LibraryPage
-import com.ljyh.mei.utils.rememberPreference
+import com.ljyh.mei.ui.navigation.ContentFeature
+import com.ljyh.mei.utils.dataStore
+import com.ljyh.mei.utils.toEnum
+
+internal fun resolveLibraryDefaultPage(
+    value: String,
+    style: LibraryStyle,
+    enabledFeatures: Set<ContentFeature>,
+): LibraryPage? {
+    val page = LibraryPage.entries.firstOrNull { it.name == value } ?: return null
+    if (page.requiredFeature != null && page.requiredFeature !in enabledFeatures) return null
+    return if (style == LibraryStyle.Default && page == LibraryPage.Podcasts) {
+        LibraryPage.Albums
+    } else page
+}
 
 @Composable
 fun LibraryScreen(
@@ -45,21 +64,44 @@ fun LibraryScreen(
     isNavigationTab: Boolean = false,
     category: LibraryPage? = null,
 ) {
-    val libraryStyle by rememberEnumPreference(LibraryStyleKey, LibraryStyle.Default)
+    val context = LocalContext.current
+    val preferenceState by context.dataStore.data.collectAsState(initial = null)
+    val preferences = preferenceState ?: return
+    val libraryStyle = preferences[LibraryStyleKey].toEnum(LibraryStyle.Default)
+    val defaultPagePreference = preferences[LibraryDefaultPageKey].orEmpty()
+    val podcastsEnabled = preferences[PodcastsEnabledKey] ?: true
+    val enabledFeatures = buildSet {
+        if (podcastsEnabled) add(ContentFeature.Podcasts)
+        if (preferences[DownloadsEnabledKey] != false) add(ContentFeature.Downloads)
+        if (preferences[CloudMusicEnabledKey] != false) add(ContentFeature.CloudMusic)
+        if (preferences[ListeningHistoryEnabledKey] != false) add(ContentFeature.ListeningHistory)
+    }
+    val defaultPage = resolveLibraryDefaultPage(defaultPagePreference, libraryStyle, enabledFeatures)
+    val navController = LocalNavController.current
+    var defaultPageApplied by rememberSaveable { mutableStateOf(false) }
+    var selectedPage by rememberSaveable { mutableStateOf(defaultPage ?: LibraryPage.Songs) }
+    LaunchedEffect(Unit) {
+        if (!defaultPageApplied) {
+            defaultPageApplied = true
+            if (category == null && libraryStyle == LibraryStyle.AppleMusic) {
+                defaultPage?.let { page ->
+                    Screen.LibraryCategory.navigate(navController) { addPath(page.name) }
+                }
+            }
+        }
+    }
     if (category == null && libraryStyle == LibraryStyle.AppleMusic) {
-        LibraryCategoryList(isNavigationTab)
+        LibraryCategoryList(isNavigationTab, podcastsEnabled)
         return
     }
-    val navController = LocalNavController.current
     val playlists by viewModel.playlists.collectAsState()
     val albums by viewModel.albums.collectAsState()
     val accountId by viewModel.accountId.collectAsState()
     val likedSongs by viewModel.likedSongs.collectAsState()
     val likedSongsLoading by viewModel.likedSongsLoading.collectAsState()
     val likedSongsError by viewModel.likedSongsError.collectAsState()
-    val userId by rememberPreference(UserIdKey, "")
-    val cookie by rememberPreference(CookieKey, "")
-    var selectedPage by rememberSaveable { mutableStateOf(LibraryPage.Songs) }
+    val userId = preferences[UserIdKey].orEmpty()
+    val cookie = preferences[CookieKey].orEmpty()
     val mergeAlbumPodcasts = libraryStyle == LibraryStyle.Default && category == null
     val displayedPage = category ?: if (mergeAlbumPodcasts && selectedPage == LibraryPage.Podcasts) {
         LibraryPage.Albums
@@ -140,8 +182,7 @@ fun EmptyLoginState(
 }
 
 @Composable
-private fun LibraryCategoryList(isNavigationTab: Boolean) {
-    val podcastsEnabled by rememberPreference(PodcastsEnabledKey, true)
+private fun LibraryCategoryList(isNavigationTab: Boolean, podcastsEnabled: Boolean) {
     val categories = LibraryPage.entries.filter { it != LibraryPage.Podcasts || podcastsEnabled }
     val navController = LocalNavController.current
     val colors = LocalGlassColors.current

@@ -49,9 +49,14 @@ import com.ljyh.mei.constants.OriginalCoverKey
 import com.ljyh.mei.constants.PlayerStyle
 import com.ljyh.mei.constants.LibraryStyle
 import com.ljyh.mei.constants.LibraryStyleKey
+import com.ljyh.mei.constants.LibraryDefaultPageKey
 import com.ljyh.mei.constants.KeepBottomBarExpandedKey
 import com.ljyh.mei.constants.LiquidGlassEnabledKey
 import com.ljyh.mei.constants.ReduceTransparencyKey
+import com.ljyh.mei.constants.PodcastsEnabledKey
+import com.ljyh.mei.constants.DownloadsEnabledKey
+import com.ljyh.mei.constants.CloudMusicEnabledKey
+import com.ljyh.mei.constants.ListeningHistoryEnabledKey
 import com.ljyh.mei.constants.PlayerKeepScreenOnKey
 import com.ljyh.mei.constants.PlayerStyleKey
 import com.ljyh.mei.constants.PlaylistCoverStyle
@@ -73,6 +78,8 @@ import com.ljyh.mei.ui.glass.IosPopupButton
 import com.ljyh.mei.ui.glass.IosTypography
 import com.ljyh.mei.ui.local.LocalNavController
 import com.ljyh.mei.ui.local.LocalPlayerAwareWindowInsets
+import com.ljyh.mei.ui.navigation.ContentFeature
+import com.ljyh.mei.ui.navigation.LibraryPage
 import com.ljyh.mei.utils.rememberEnumPreference
 import com.ljyh.mei.utils.rememberPreference
 import kotlin.math.roundToInt
@@ -92,9 +99,28 @@ fun AppearanceSettings(
     val (playlistStyle, setPlaylistStyle) = rememberEnumPreference(PlaylistCoverStyleKey, PlaylistCoverStyle.Cover)
     val (playlistHeader, setPlaylistHeader) = rememberPreference(PlaylistTrackTableHeaderKey, false)
     val (libraryStyle, setLibraryStyle) = rememberEnumPreference(LibraryStyleKey, LibraryStyle.Default)
+    val (libraryDefaultPage, setLibraryDefaultPage) = rememberPreference(LibraryDefaultPageKey, "")
     val (keepBottomBarExpanded, setKeepBottomBarExpanded) = rememberPreference(KeepBottomBarExpandedKey, false)
     val (liquidGlassEnabled, setLiquidGlassEnabled) = rememberPreference(LiquidGlassEnabledKey, true)
     val (reduceTransparency, setReduceTransparency) = rememberPreference(ReduceTransparencyKey, false)
+    val podcastsEnabled by rememberPreference(PodcastsEnabledKey, true)
+    val downloadsEnabled by rememberPreference(DownloadsEnabledKey, true)
+    val cloudMusicEnabled by rememberPreference(CloudMusicEnabledKey, true)
+    val historyEnabled by rememberPreference(ListeningHistoryEnabledKey, true)
+    val libraryDefaultPages = LibraryPage.entries.filter { page ->
+        when (page.requiredFeature) {
+            ContentFeature.Podcasts -> podcastsEnabled && libraryStyle == LibraryStyle.AppleMusic
+            ContentFeature.Downloads -> downloadsEnabled
+            ContentFeature.CloudMusic -> cloudMusicEnabled
+            ContentFeature.ListeningHistory -> historyEnabled
+            null -> true
+        }
+    }.map(LibraryPage::name)
+    val displayedLibraryDefaultPage = when {
+        libraryStyle == LibraryStyle.Default && libraryDefaultPage == LibraryPage.Podcasts.name && podcastsEnabled -> LibraryPage.Albums.name
+        libraryDefaultPage in libraryDefaultPages -> libraryDefaultPage
+        else -> ""
+    }
     val (playerStyle, setPlayerStyle) = rememberEnumPreference(PlayerStyleKey, PlayerStyle.AppleMusic)
     val (keepScreenOn, setKeepScreenOn) = rememberPreference(PlayerKeepScreenOnKey, false)
     val (originalCover, setOriginalCover) = rememberPreference(OriginalCoverKey, false)
@@ -173,6 +199,17 @@ fun AppearanceSettings(
                     R.string.appearance_library_style, "music.note.list", libraryStyle, LibraryStyle.entries,
                     { if (it == LibraryStyle.AppleMusic) "Apple Music" else stringResource(R.string.appearance_accent_default) },
                     setLibraryStyle,
+                )
+                AppearanceChoice(
+                    R.string.appearance_library_default_page,
+                    "music.note.list",
+                    displayedLibraryDefaultPage,
+                    listOf("") + libraryDefaultPages,
+                    { value ->
+                        LibraryPage.entries.firstOrNull { it.name == value }?.let { stringResource(it.titleRes) }
+                            ?: stringResource(R.string.appearance_accent_default)
+                    },
+                    setLibraryDefaultPage,
                 )
             }
         }
