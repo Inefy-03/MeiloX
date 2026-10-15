@@ -58,6 +58,7 @@ internal val LocalPlayerArtwork = staticCompositionLocalOf<Pair<String, androidx
 
 /** Publishes a capturable frame for the player's native GL background. */
 val LocalPlayerBackdropFrame = staticCompositionLocalOf<MutableState<ImageBitmap?>?> { null }
+internal val LocalPlayerBackgroundReadyChanged = staticCompositionLocalOf<(Boolean) -> Unit> { {} }
 
 @OptIn(UnstableApi::class)
 @RequiresApi(Build.VERSION_CODES.S)
@@ -67,6 +68,7 @@ fun BottomSheetPlayer(
     modifier: Modifier = Modifier,
     compactMiniPlayerProgress: State<Float>,
     miniPlayerVerticalOffset: () -> Dp,
+    onBackgroundReadyChanged: (Boolean) -> Unit = {},
     playerViewModel: PlayerViewModel = hiltViewModel(),
     playlistViewModel: PlaylistViewModel = hiltViewModel(),
 ) {
@@ -142,6 +144,7 @@ fun BottomSheetPlayer(
         LocalPlayerSheet provides sheetLayers,
         LocalPlayerArtwork provides artwork,
         LocalPlayerBackdropFrame provides backdropFrame,
+        LocalPlayerBackgroundReadyChanged provides onBackgroundReadyChanged,
         LocalGlassBackdrop provides playerBackdrop,
         LocalBlurBackdrop provides playerBackdrop,
     ) {

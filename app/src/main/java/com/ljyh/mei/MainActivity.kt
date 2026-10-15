@@ -78,6 +78,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -635,6 +636,10 @@ class MainActivity : ComponentActivity() {
                         collapsedBound = collapsedBound,
                         expandedBound = maxHeight,
                     )
+                    val playerBackgroundReady = remember { mutableStateOf(false) }
+                    val onPlayerBackgroundReadyChanged = remember {
+                        { ready: Boolean -> playerBackgroundReady.value = ready }
+                    }
                     DisposableEffect(playerBottomSheetState) {
                         scrollPlayerSheet.value = playerBottomSheetState
                         onDispose {
@@ -807,6 +812,17 @@ class MainActivity : ComponentActivity() {
                                     .fillMaxSize()
                                     // Keep sibling player/nav draw invalidations from recording
                                     // the unchanged page again. Child updates remain live.
+                                    .layout { measurable, constraints ->
+                                        val placeable = measurable.measure(constraints)
+                                        layout(placeable.width, placeable.height) {
+                                            // SurfaceView clears a hole after Compose draws. An
+                                            // opaque player therefore does not automatically
+                                            // cull the home page's text/images/glass underneath.
+                                            if (!playerBottomSheetState.isExpanded || !playerBackgroundReady.value) {
+                                                placeable.place(0, 0)
+                                            }
+                                        }
+                                    }
                                     .graphicsLayer()
                                     .layerBackdrop(bottomBackdrop)
                                     .trackBackdropPosition(bottomBackdrop),
@@ -979,6 +995,7 @@ class MainActivity : ComponentActivity() {
                             state = playerBottomSheetState,
                             backdrop = bottomControlsBackdrop,
                             pageDarkAppearance = pageDarkAppearance,
+                            onBackgroundReadyChanged = onPlayerBackgroundReadyChanged,
                         )
                         AnimatedVisibility(
                             visible = active,
@@ -1156,6 +1173,7 @@ private fun BoxScope.AnimatedMiniPlayerLayer(
     state: BottomSheetState,
     backdrop: Backdrop,
     pageDarkAppearance: Boolean?,
+    onBackgroundReadyChanged: (Boolean) -> Unit,
 ) {
     val miniPlayerVerticalOffset = remember(compactProgress) {
         { (NavigationBarHeight - 16.dp) * compactProgress.value }
@@ -1176,6 +1194,7 @@ private fun BoxScope.AnimatedMiniPlayerLayer(
                 modifier = Modifier.fillMaxSize(),
                 compactMiniPlayerProgress = compactProgress,
                 miniPlayerVerticalOffset = miniPlayerVerticalOffset,
+                onBackgroundReadyChanged = onBackgroundReadyChanged,
             )
         }
     }

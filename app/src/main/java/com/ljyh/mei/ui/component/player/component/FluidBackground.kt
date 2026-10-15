@@ -26,6 +26,7 @@ import com.ljyh.mei.constants.MeshSubdivisionKey
 import com.ljyh.mei.ui.component.sheet.LocalPlayerSheet
 import com.ljyh.mei.ui.component.sheet.playerBackgroundAlpha
 import com.ljyh.mei.ui.component.player.LocalPlayerBackdropFrame
+import com.ljyh.mei.ui.component.player.LocalPlayerBackgroundReadyChanged
 import com.ljyh.mei.ui.component.player.component.mesh.MeshBackgroundView
 import com.ljyh.mei.ui.component.utils.LifecycleStartedEffect
 import androidx.lifecycle.Lifecycle
@@ -65,6 +66,7 @@ fun FluidBackground(
     val lifecycleOwner = LocalLifecycleOwner.current
     val sheet = LocalPlayerSheet.current
     val backdropFrame = LocalPlayerBackdropFrame.current
+    val onBackgroundReadyChanged by rememberUpdatedState(LocalPlayerBackgroundReadyChanged.current)
     val expanded by remember(sheet) {
         derivedStateOf { sheet == null || sheet.state.isExpanded }
     }
@@ -240,7 +242,10 @@ fun FluidBackground(
                 MeshBackgroundView(ctx).apply {
                     meshView = this
                     this.alpha = 0f
-                    onSurfaceReadyChanged = { surfaceReady = it }
+                    onSurfaceReadyChanged = {
+                        surfaceReady = it
+                        onBackgroundReadyChanged(it)
+                    }
                     setFlowSpeed(flowSpeed)
                     setRenderScale(renderScale)
                     setSubdivision(subdivision)
@@ -258,7 +263,10 @@ fun FluidBackground(
                     (sheet?.state?.progress?.let(::playerBackgroundAlpha) ?: 1f) else 0f
 
             },
-            onRelease = { view -> view.onSurfaceReadyChanged = null },
+            onRelease = { view ->
+                view.onSurfaceReadyChanged = null
+                onBackgroundReadyChanged(false)
+            },
             modifier = Modifier.fillMaxSize(),
         )
     }
