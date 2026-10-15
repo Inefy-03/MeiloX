@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
@@ -29,12 +30,15 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
@@ -63,6 +67,7 @@ import com.kyant.capsule.ContinuousRoundedRectangle
 import com.ljyh.mei.ui.glass.GlassPressHighlight
 import com.ljyh.mei.ui.glass.clipGlassShape
 import com.ljyh.mei.ui.glass.rememberGlassMorphRenderer
+import com.ljyh.mei.ui.component.player.LocalPlayerArtwork
 import kotlin.math.roundToInt
 
 internal val LocalPlayerSheet = staticCompositionLocalOf<PlayerSheetLayers?> { null }
@@ -75,6 +80,8 @@ internal class PlayerSheetLayers(
     val fullContent: GraphicsLayer,
     val artwork: GraphicsLayer,
 ) {
+    private val transitioning = derivedStateOf { state.isTransitioning }
+    val isTransitioning get() = transitioning.value
     var hostBounds by mutableStateOf(Rect.Zero)
         private set
     var miniBounds by mutableStateOf(Rect.Zero)
@@ -85,7 +92,7 @@ internal class PlayerSheetLayers(
     var sharedArtworkEnabled by mutableStateOf(true)
     var circularArtwork by mutableStateOf(false)
     var artworkRecorded by mutableStateOf(false)
-    var artworkOverlayMounted by mutableStateOf(false)
+    var artworkOverlayDrawn by mutableStateOf(false)
     var miniLayoutCoordinates: LayoutCoordinates? = null
     private var frozenMiniContent: Rect? = null
     private var frozenMiniArtwork: Rect? = null
@@ -123,8 +130,8 @@ internal class PlayerSheetLayers(
         frozenMiniArtwork ?: miniLayoutBounds(miniArtworkCoordinates) ?: miniArtworkBounds,
     )
     val targetArtwork get() = frozenTargetArtwork ?: fullArtworkBounds
-    val drawsArtworkOverlay get() = artworkOverlayMounted && canMountArtworkOverlay
-    val canMountArtworkOverlay get() = sharedArtworkEnabled && state.isTransitioning &&
+    val drawsArtworkOverlay get() = artworkOverlayDrawn && canDrawArtworkOverlay
+    val canMountArtworkOverlay get() = sharedArtworkEnabled && isTransitioning &&
         sourceArtwork.isUsable() && targetArtwork.isUsable() && hostBounds.isUsable()
     val canDrawArtworkOverlay get() = canMountArtworkOverlay && artworkRecorded
 
@@ -199,7 +206,7 @@ internal class PlayerSheetLayers(
     }
 
     fun shouldCapture(layer: GraphicsLayer): Boolean =
-        state.isTransitioning && layer !in recordedTransitionLayers
+        isTransitioning && layer !in recordedTransitionLayers
 
     fun updateTransitionFrame() {
         pressRelease.update(state.progress)
@@ -209,12 +216,10 @@ internal class PlayerSheetLayers(
         recordedTransitionLayers += layer
         if (layer === artwork && !artworkRecorded) {
             artworkRecorded = true
-            if (!artworkOverlayMounted) {
-                // The first expansion may discover the target artwork bounds during layout.
-                // Refresh only the mini snapshot once so it no longer contains a ghost cover.
-                recordedTransitionLayers -= miniHost
-                recordedTransitionLayers -= miniContent
-            }
+            // Refresh the mini snapshot once after the overlay has a real image, so it
+            // cannot retain the fallback cover painted before that handoff was ready.
+            recordedTransitionLayers -= miniHost
+            recordedTransitionLayers -= miniContent
         }
     }
 }
@@ -256,6 +261,7 @@ internal fun Modifier.playerArtwork(
     shared: Boolean = true,
 ): Modifier {
     val layers = LocalPlayerSheet.current ?: return this
+    val artworkPainter = LocalPlayerArtwork.current?.second
     SideEffect {
         layers.sharedArtworkEnabled = shared
         layers.artworkCornerRadius = cornerRadius
@@ -273,11 +279,29 @@ internal fun Modifier.playerArtwork(
     }
         .drawWithContent {
             if (layers.shouldCapture(layers.artwork)) {
-                layers.artwork.record { this@drawWithContent.drawContent() }
+                val intrinsic = artworkPainter?.intrinsicSize
+                if (artworkPainter != null && intrinsic != null && intrinsic.width > 0f && intrinsic.height > 0f) {
+                    // A recorded child GraphicsLayer remains live. When the original cover
+                    // is hidden for the handoff, that reference can become empty too. Record
+                    // the retained painter's bitmap commands directly, with the same crop.
+                    layers.artwork.record {
+                        val scale = maxOf(size.width / intrinsic.width, size.height / intrinsic.height)
+                        val imageSize = Size(intrinsic.width * scale, intrinsic.height * scale)
+                        withTransform({
+                            translate((size.width - imageSize.width) / 2f, (size.height - imageSize.height) / 2f)
+                        }) {
+                            with(artworkPainter) { draw(imageSize) }
+                        }
+                    }
+                } else {
+                    layers.artwork.record { this@drawWithContent.drawContent() }
+                }
                 layers.markCaptured(layers.artwork)
             }
-            // Shared artwork only appears at its measured overlay position during motion.
-            if (!layers.state.isTransitioning || !shared) drawContent()
+            // Recording can finish during drawing, before the overlay draws its first
+            // frame. Keep the endpoint visible until that overlay can take ownership;
+            // otherwise the first closing frame has neither copy of the cover.
+            if (!shared || !layers.drawsArtworkOverlay) drawContent()
         }
 }
 
@@ -332,7 +356,13 @@ private fun Modifier.clipPlayerRecordingHost(
                 val radius = playerContainerCornerRadius(
                     layers.sourceContainer.height / 2f, expandedCornerRadius, progress,
                 )
-                shape = PlayerHitShape(bounds, radius)
+                // The visible shell keeps its continuous corners in the tiled Canvas.
+                // A native rounded outline avoids a full-screen path mask while keeping
+                // hidden controls from intercepting touches in the exposed page corners.
+                shape = object : Shape {
+                    override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density) =
+                        Outline.Rounded(RoundRect(bounds, CornerRadius(radius)))
+                }
             }
         }
 }
@@ -414,7 +444,7 @@ fun BottomSheet(
         backdrop = transitionBackdrop,
         active = active && transitionGeometryReady,
         // Only the blurred page sample is reduced; all moving edges and content stay native.
-        renderScale = 1f / 3f,
+        renderScale = 0.25f,
     )
     val expandedCornerRadius = rememberPlayerScreenCornerRadius(layers.hostBounds)
     SideEffect { layers.updateFrozenBounds() }
@@ -490,23 +520,15 @@ fun BottomSheet(
                 val p = state.progress
                 val globalBounds = playerContainerRect(layers.sourceContainer, layers.hostBounds, p)
                 val bounds = globalBounds.translate(-layers.hostBounds.topLeft)
-                val radius = playerContainerCornerRadius(
-                    layers.sourceContainer.height / 2f, expandedCornerRadius, p,
-                )
-                val shellShape = ContinuousRoundedRectangle(radius.toDp())
-                val outline = shellShape.createOutline(bounds.size, layoutDirection, this)
-                val path = Path().apply {
-                    when (outline) {
-                        is Outline.Rectangle -> addRect(outline.rect)
-                        is Outline.Rounded -> addRoundRect(outline.roundRect)
-                        is Outline.Generic -> addPath(outline.path)
-                    }
-                    translate(bounds.topLeft)
-                }
-                clipGlassShape(bounds, radius, shellShape, path) {
+                // This snapshot contains inset controls, not the visible shell. The shell
+                // and native background retain their continuous corner clip separately.
+                // Replaying the text/icon display lists in seven corner tiles multiplies
+                // command preparation even when a tile contains no visible controls.
+                clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) {
                     val scale = bounds.width / size.width.coerceAtLeast(1f)
-                    if (layers.miniContent.size.width > 0) {
-                        layers.miniContent.alpha = playerMiniContentAlpha(p)
+                    val miniAlpha = playerMiniContentAlpha(p)
+                    if (miniAlpha > 0f && layers.miniContent.size.width > 0) {
+                        layers.miniContent.alpha = miniAlpha
                         val source = layers.sourceContainer
                         val offset = Offset(
                             layers.sourceMiniContent.left - layers.hostBounds.left,
@@ -518,8 +540,9 @@ fun BottomSheet(
                         }) { drawLayer(layers.miniContent) }
                     }
 
-                    if (layers.fullContent.size.width > 0) {
-                        layers.fullContent.alpha = playerContentAlpha(p)
+                    val fullAlpha = playerContentAlpha(p)
+                    if (fullAlpha > 0f && layers.fullContent.size.width > 0) {
+                        layers.fullContent.alpha = fullAlpha
                         withTransform({
                             translate(bounds.left, bounds.top)
                             scale(scale, scale, Offset.Zero)
@@ -558,10 +581,11 @@ fun BottomSheet(
 @Composable
 internal fun PlayerSheetArtworkOverlay(layers: PlayerSheetLayers) {
     val active by remember(layers) { derivedStateOf { layers.canMountArtworkOverlay } }
+    val drawable by remember(layers) { derivedStateOf { layers.canDrawArtworkOverlay } }
     if (!active) return
     DisposableEffect(layers) {
-        layers.artworkOverlayMounted = true
-        onDispose { layers.artworkOverlayMounted = false }
+        layers.artworkOverlayDrawn = false
+        onDispose { layers.artworkOverlayDrawn = false }
     }
     val density = LocalDensity.current
     val sourceRadius = with(density) { com.ljyh.mei.constants.ThumbnailCornerRadius.toPx() }
@@ -584,17 +608,22 @@ internal fun PlayerSheetArtworkOverlay(layers: PlayerSheetLayers) {
                     with(density) { layers.artworkCornerRadius.toPx() } *
                         (layers.targetArtwork.width / layers.artwork.size.width.coerceAtLeast(1))
                 val radius = mix(sourceRadius, targetRadius, progress)
-                shape = ContinuousRoundedRectangle(with(density) { (radius / scale.coerceAtLeast(0.001f)).toDp() })
+                // A native rounded outline moves/crops the retained image without
+                // re-recording four Canvas path masks for each animation frame.
+                shape = RoundedCornerShape(with(density) { (radius / scale.coerceAtLeast(0.001f)).toDp() })
                 clip = true
                 shadowElevation = 16.dp.toPx() * progress
             }
             .drawWithContent {
-                if (!layers.canDrawArtworkOverlay) return@drawWithContent
+                if (!drawable) return@drawWithContent
                 layers.artwork.alpha = 1f
                 withTransform({
                     val recordingScale = target.width / layers.artwork.size.width.coerceAtLeast(1)
                     scale(recordingScale, recordingScale, Offset.Zero)
                 }) { drawLayer(layers.artwork) }
+                // Composition mounting does not guarantee the draw callback has consumed
+                // the freshly recorded artwork yet. Transfer ownership after a real draw.
+                layers.artworkOverlayDrawn = true
             },
     )
 }
