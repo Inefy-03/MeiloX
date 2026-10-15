@@ -430,7 +430,7 @@ fun ConversationScreen(userId: Long, viewModel: ConversationViewModel = hiltView
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp)
+                    .padding(horizontal = 20.dp)
                     .padding(bottom = bottomPadding + 8.dp)
                     .onSizeChanged { composerHeight = with(density) { it.height.toDp() } },
                 horizontalArrangement = Arrangement.spacedBy(8.dp),

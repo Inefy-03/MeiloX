@@ -189,7 +189,7 @@ fun CommentScreen(songId: String, viewModel: CommentViewModel = hiltViewModel())
                 }
             }
             Column(
-                Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 12.dp)
+                Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 20.dp)
                     .padding(bottom = bottomPadding + 8.dp)
                     .onSizeChanged { composerHeight = with(density) { it.height.toDp() } },
                 verticalArrangement = Arrangement.spacedBy(8.dp),

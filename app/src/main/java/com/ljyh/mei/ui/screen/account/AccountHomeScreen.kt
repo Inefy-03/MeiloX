@@ -529,7 +529,7 @@ fun ListeningRankScreen(userId: Long, viewModel: ListeningRankViewModel = hiltVi
 @Composable
 private fun ListeningSummary(totalSongsListened: Int?) {
     Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 20.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp).offset( y = (-6).dp ),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Text(

@@ -1018,7 +1018,7 @@ class MainActivity : ComponentActivity() {
                                     autoFocus = focusSearchOnEntry,
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(horizontal = 12.dp)
+                                        .padding(horizontal = 20.dp)
                                         .padding(bottom = searchBottomInset + NavigationBarBottomMargin),
                                 )
                             }
