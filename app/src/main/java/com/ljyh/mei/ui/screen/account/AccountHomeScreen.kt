@@ -19,8 +19,12 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -300,6 +304,7 @@ data class ListeningRankState(
     val records: List<UserPlayRecord> = emptyList(),
     val totalSongsListened: Int? = null,
     val loading: Boolean = true,
+    val refreshing: Boolean = false,
     val error: String? = null,
 )
 
@@ -348,6 +353,7 @@ class ListeningRankViewModel @Inject constructor(
             period = period,
             records = cache[key].orEmpty(),
             totalSongsListened = totalSongsCache[userId],
+            refreshing = force,
         )
         loadJob = viewModelScope.launch {
             val summary = async {
@@ -376,6 +382,7 @@ class ListeningRankViewModel @Inject constructor(
 }
 
 @OptIn(UnstableApi::class)
+@kotlin.OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ListeningRankScreen(userId: Long, viewModel: ListeningRankViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsState()
@@ -383,6 +390,7 @@ fun ListeningRankScreen(userId: Long, viewModel: ListeningRankViewModel = hiltVi
     val playerConnection = LocalPlayerConnection.current
     val insets = LocalPlayerAwareWindowInsets.current.asPaddingValues()
     val listState = rememberLazyListState()
+    val refreshState = rememberPullToRefreshState()
     val collapseDistancePx = with(LocalDensity.current) { 56.dp.toPx() }
     val collapseProgress by remember(listState, collapseDistancePx) {
         derivedStateOf {
@@ -396,111 +404,121 @@ fun ListeningRankScreen(userId: Long, viewModel: ListeningRankViewModel = hiltVi
         onNavigateBack = navController::navigateUp,
         bottomPadding = insets.calculateBottomPadding(),
         collapseProgress = collapseProgress,
-        actions = {
-            GlassIconButton({ viewModel.load(userId, state.period, force = true) }) {
-                SfIcon(SfSymbol.ArrowClockwise, stringResource(R.string.refresh))
-            }
-        },
     ) { contentPadding ->
-        LazyColumn(
-            state = listState,
+        PullToRefreshBox(
+            isRefreshing = state.refreshing,
+            onRefresh = { if (!state.loading) viewModel.load(userId, state.period, force = true) },
+            state = refreshState,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = contentPadding,
-            verticalArrangement = Arrangement.spacedBy(0.dp),
+            indicator = {
+                PullToRefreshDefaults.Indicator(
+                    state = refreshState,
+                    isRefreshing = state.refreshing,
+                    modifier = Modifier.align(Alignment.TopCenter)
+                        .padding(top = contentPadding.calculateTopPadding()),
+                )
+            },
         ) {
-            item(key = "rank-summary") {
-                ListeningSummary(state.totalSongsListened)
-            }
-            item(key = "rank-period") {
-                GlassSegmentedControl(
-                    items = listOf(
-                        ListeningPeriod.Week to stringResource(R.string.account_week),
-                        ListeningPeriod.AllTime to stringResource(R.string.account_all_time),
-                    ),
-                    selected = state.period,
-                    onSelected = { viewModel.load(userId, it) },
-                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
-                )
-            }
-            item(key = "rank-context") {
-                Text(
-                    stringResource(
-                        if (state.period == ListeningPeriod.Week) R.string.listening_rank_week_context
-                        else R.string.listening_rank_all_time_context,
-                    ),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 10.dp),
-                )
-            }
-            if (state.loading && state.records.isEmpty()) {
-                item(key = "rank-loading") {
-                    Box(
-                        Modifier.fillMaxWidth().padding(top = 10.dp).padding(64.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        CircularProgressIndicator()
-                    }
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = contentPadding,
+                verticalArrangement = Arrangement.spacedBy(0.dp),
+            ) {
+                item(key = "rank-summary") {
+                    ListeningSummary(state.totalSongsListened)
                 }
-            } else {
-                state.error?.let {
-                    item {
-                        Text(
-                            it,
-                            modifier = Modifier.padding(top = 10.dp),
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
+                item(key = "rank-period") {
+                    GlassSegmentedControl(
+                        items = listOf(
+                            ListeningPeriod.Week to stringResource(R.string.account_week),
+                            ListeningPeriod.AllTime to stringResource(R.string.account_all_time),
+                        ),
+                        selected = state.period,
+                        onSelected = { viewModel.load(userId, it) },
+                        modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                    )
                 }
-                if (!state.loading && state.error == null && state.records.isEmpty()) {
-                    item {
-                        Text(
-                            stringResource(R.string.account_no_listening_records),
-                            modifier = Modifier.fillMaxWidth().padding(top = 10.dp).padding(48.dp),
-                            textAlign = TextAlign.Center,
-                        )
+                item(key = "rank-context") {
+                    Text(
+                        stringResource(
+                            if (state.period == ListeningPeriod.Week) R.string.listening_rank_week_context
+                            else R.string.listening_rank_all_time_context,
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 10.dp),
+                    )
+                }
+                if (state.loading && !state.refreshing && state.records.isEmpty()) {
+                    item(key = "rank-loading") {
+                        Box(
+                            Modifier.fillMaxWidth().padding(top = 10.dp).padding(64.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            CircularProgressIndicator()
+                        }
                     }
-                } else if (state.records.isNotEmpty()) {
-                    groupedLazyItems(
-                        items = state.records,
-                        key = { "account-rank-${state.period.name}-${it.song.id}" },
-                        contentType = "account-rank-record",
-                        firstItemTopPadding = 10.dp,
-                    ) { record, index ->
-                        IosListRow(
-                            title = record.song.name,
-                            subtitle = record.song.artists.joinToString(" / "),
-                            detail = record.playCount?.let {
-                                stringResource(R.string.listening_rank_play_count, NumberFormat.getIntegerInstance().format(it))
-                            } ?: stringResource(R.string.listening_count_unavailable),
-                            showTopSeparator = index > 0,
-                            leading = {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        "${index + 1}",
-                                        modifier = Modifier.width(28.dp).offset(x = (-4).dp),
-                                        textAlign = TextAlign.Center,
-                                        fontWeight = FontWeight.Bold,
+                } else {
+                    state.error?.let {
+                        item {
+                            Text(
+                                it,
+                                modifier = Modifier.padding(top = 10.dp),
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
+                    if (!state.loading && state.error == null && state.records.isEmpty()) {
+                        item {
+                            Text(
+                                stringResource(R.string.account_no_listening_records),
+                                modifier = Modifier.fillMaxWidth().padding(top = 10.dp).padding(48.dp),
+                                textAlign = TextAlign.Center,
+                            )
+                        }
+                    } else if (state.records.isNotEmpty()) {
+                        groupedLazyItems(
+                            items = state.records,
+                            key = { "account-rank-${state.period.name}-${it.song.id}" },
+                            contentType = "account-rank-record",
+                            firstItemTopPadding = 10.dp,
+                        ) { record, index ->
+                            IosListRow(
+                                title = record.song.name,
+                                subtitle = record.song.artists.joinToString(" / "),
+                                detail = record.playCount?.let {
+                                    stringResource(R.string.listening_rank_play_count, NumberFormat.getIntegerInstance().format(it))
+                                } ?: stringResource(R.string.listening_count_unavailable),
+                                showTopSeparator = index > 0,
+                                leading = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            "${index + 1}",
+                                            modifier = Modifier.width(28.dp).offset(x = (-4).dp),
+                                            textAlign = TextAlign.Center,
+                                            fontWeight = FontWeight.Bold,
+                                        )
+                                        AsyncImage(
+                                            model = record.song.coverUrl,
+                                            contentDescription = null,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.size(44.dp).clip(ContinuousRoundedRectangle(10.dp)),
+                                        )
+                                    }
+                                },
+                                onClick = {
+                                    playerConnection?.playQueue(
+                                        ListQueue(
+                                            id = "account-rank-${state.period.name}",
+                                            title = navController.context.getString(R.string.account_listening_rank),
+                                            items = state.records.map { it.song.id.toString() to null },
+                                            startIndex = index,
+                                        ),
                                     )
-                                    AsyncImage(
-                                        model = record.song.coverUrl,
-                                        contentDescription = null,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.size(44.dp).clip(ContinuousRoundedRectangle(10.dp)),
-                                    )
-                                }
-                            },
-                            onClick = {
-                                playerConnection?.playQueue(
-                                    ListQueue(
-                                        id = "account-rank-${state.period.name}",
-                                        title = navController.context.getString(R.string.account_listening_rank),
-                                        items = state.records.map { it.song.id.toString() to null },
-                                        startIndex = index,
-                                    ),
-                                )
-                            },
-                        )
+                                },
+                            )
+                        }
                     }
                 }
             }
