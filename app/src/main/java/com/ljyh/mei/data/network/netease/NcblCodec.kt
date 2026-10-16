@@ -54,7 +54,12 @@ internal object NcblCodec {
 
         val encryptedMeta = chacha20(keyB, counter, nonce, meta)
         val headerLength = FIXED_HEADER_SIZE + 4 + encryptedMeta.size
-        val compressedBody = compressor(body)
+        val compressedBody = try {
+            compressor(body)
+        } catch (error: LinkageError) {
+            // Let the client report a failed upload without crashing playback.
+            throw IllegalStateException("Zstd compression is unavailable", error)
+        }
         val frameCount = maxOf(1L, (compressedBody.size.toLong() + MAX_FRAME_SIZE - 1) / MAX_FRAME_SIZE)
         val trailingSize = compressedBody.size.toLong() + frameCount * 6L
         require(trailingSize <= MAX_UINT32) { "NCBL payload exceeds the v3 body length field" }

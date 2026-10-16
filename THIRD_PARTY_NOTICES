@@ -135,13 +135,13 @@ https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced/blob/83ee2cda34a20f
 
 Zstd JNI
 --------
-The `com.github.luben:zstd-jni:1.5.7-20` Android archive and JVM runtime JAR
+The `com.github.luben:zstd-jni:1.5.7-23` Android archive and JVM runtime JAR
 provide Zstandard compression. The JNI bindings are Copyright (c) 2015-present
 Luben Karavelov and licensed under the BSD 2-Clause License. The bundled
 Zstandard native library is Copyright (c) 2016-present Facebook, Inc. and
 licensed under the BSD 3-Clause License:
-https://github.com/luben/zstd-jni/tree/v1.5.7-20
-https://github.com/luben/zstd-jni/blob/v1.5.7-20/src/main/native/LICENSE
+https://github.com/luben/zstd-jni/tree/v1.5.7-23
+https://github.com/luben/zstd-jni/blob/v1.5.7-23/src/main/native/LICENSE
 https://opensource.org/licenses/BSD-2-Clause
 https://opensource.org/licenses/BSD-3-Clause
 

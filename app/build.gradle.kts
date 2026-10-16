@@ -93,7 +93,7 @@ android {
             .get()
         minSdk = 33
         targetSdk = 37
-        versionCode = 14
+        versionCode = 15
         versionName = "1.55.0"
         buildConfigField("long", "BUILD_NUMBER", "${buildNumber}L")
         buildConfigField("String", "BUILD_COMMIT_SHA", "\"$buildCommitSha\"")
@@ -188,7 +188,8 @@ dependencies {
     implementation(libs.annotations)
     implementation(libs.androidx.core.animation)
     implementation(libs.androidx.compose.material3.window.size.class1)
-    implementation(libs.zstd.jni)
+    // Android needs the AAR's JNI libraries; the default artifact is a desktop JVM JAR.
+    implementation(variantOf(libs.zstd.jni) { artifactType("aar") })
     testImplementation(libs.junit)
     testRuntimeOnly(libs.zstd.jni)
     testImplementation(libs.kotlinx.coroutines.test)

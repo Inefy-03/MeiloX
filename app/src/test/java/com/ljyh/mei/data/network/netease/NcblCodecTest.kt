@@ -6,6 +6,8 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -103,6 +105,20 @@ class NcblCodecTest {
 
         assertArrayEquals(byteArrayOf(0x28, 0xb5.toByte(), 0x2f, 0xfd.toByte()), compressed.copyOfRange(0, 4))
         assertArrayEquals(body, Zstd.decompress(compressed, body.size))
+    }
+
+    @Test
+    fun nativeCompressionLinkageFailuresBecomeRecoverableEncodingFailures() {
+        listOf(
+            UnsatisfiedLinkError("Native library is unavailable"),
+            NoClassDefFoundError("Zstd initialization previously failed"),
+        ).forEach { linkageError ->
+            val error = assertThrows(IllegalStateException::class.java) {
+                NcblCodec.encode(FIXTURE_META, FIXTURE_BODY, fixedRandom()) { throw linkageError }
+            }
+            assertEquals("Zstd compression is unavailable", error.message)
+            assertSame(linkageError, error.cause)
+        }
     }
 
     private data class DecodedPayload(

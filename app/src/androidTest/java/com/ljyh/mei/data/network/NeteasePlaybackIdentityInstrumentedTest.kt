@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.mutablePreferencesOf
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.github.luben.zstd.Zstd
 import com.ljyh.mei.constants.CookieKey
 import com.ljyh.mei.constants.DeviceIdKey
 import com.ljyh.mei.constants.NeteaseCsrfKey
@@ -12,6 +13,7 @@ import com.ljyh.mei.constants.NeteaseMusicAKey
 import com.ljyh.mei.constants.NeteaseSessionTypeKey
 import com.ljyh.mei.constants.NeteaseUrsAppIdKey
 import com.ljyh.mei.constants.SDeviceIdKey
+import com.ljyh.mei.data.network.netease.NcblCodec
 import com.ljyh.mei.di.NETEASE_EAPI_PROFILE_HEADER
 import com.ljyh.mei.di.NeteaseInterceptor
 import com.ljyh.mei.di.PLAYBACK_HISTORY_PROFILE
@@ -26,6 +28,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -35,6 +38,14 @@ import org.junit.runner.RunWith
 /** Synthetic preferences and a terminal interceptor prevent account writes and network traffic. */
 @RunWith(AndroidJUnit4::class)
 class NeteasePlaybackIdentityInstrumentedTest {
+    @Test fun clientLogEncodingLoadsPackagedZstdNativeLibrary() {
+        val body = "playback-native-smoke".toByteArray(Charsets.UTF_8)
+        val encoded = NcblCodec.encode("{}".toByteArray(Charsets.UTF_8), body)
+
+        assertArrayEquals(byteArrayOf(0x4e, 0x43, 0x42, 0x4c), encoded.copyOfRange(0, 4))
+        assertArrayEquals(body, Zstd.decompress(Zstd.compress(body), body.size))
+    }
+
     @Test fun playbackProfileUsesExactlyTheMobileLoginIdentity() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val before = context.dataStore.data.first()
