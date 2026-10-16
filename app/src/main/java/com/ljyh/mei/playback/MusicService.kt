@@ -257,7 +257,10 @@ class MusicService : MediaLibraryService(),
             .setUsage(C.USAGE_MEDIA)
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
             .build()
+        // Media3 1.11 dynamic scheduling batches position updates. Both decks need
+        // continuous timestamps for karaoke highlighting and beat synchronization.
         val firstDeck = ExoPlayer.Builder(this)
+            .experimentalSetDynamicSchedulingEnabled(false)
             //媒体源工厂
             .setMediaSourceFactory(playerMediaSourceFactory)
             //渲染器工厂
@@ -280,6 +283,7 @@ class MusicService : MediaLibraryService(),
                     .build()
             }
         val secondDeck = ExoPlayer.Builder(this)
+            .experimentalSetDynamicSchedulingEnabled(false)
             .setMediaSourceFactory(
                 DefaultMediaSourceFactory(createDataSourceFactory())
                     .setLoadErrorHandlingPolicy(MusicLoadErrorHandlingPolicy()),

@@ -118,6 +118,68 @@ class PlaybackBeatMeterTest {
     }
 
     @Test
+    fun playbackPositionKeepsFrameCadenceWithDynamicSchedulingDisabled() {
+        val file = makeTone(durationSeconds = 12)
+        try {
+            // Media3 1.11 enables dynamic scheduling by default. Compare its cadence without
+            // requiring it to stall on every device or audio output configuration.
+            val baseline = createDeck(PlaybackBeatMeter(), file, dynamicSchedulingEnabled = true, initialVolume = 0f)
+            val baselineCadence = try {
+                SystemClock.sleep(1_000)
+                samplePositionCadence(baseline)
+            } finally {
+                instrumentation.runOnMainSync { baseline.release() }
+            }
+            val fixed = createDeck(PlaybackBeatMeter(), file, initialVolume = 0f)
+            try {
+                SystemClock.sleep(1_000)
+                val fixedCadence = samplePositionCadence(fixed)
+                instrumentation.sendStatus(0, android.os.Bundle().apply {
+                    putString("stream", "\nPlayback position cadence: baseline=$baselineCadence; fixed=$fixedCadence\n")
+                })
+                assertTrue("Position must advance on most frame samples: $fixedCadence",
+                    fixedCadence.updates >= fixedCadence.samples / 2)
+                assertTrue("Position updates must stay frequent for word-level lyrics: $fixedCadence",
+                    fixedCadence.p90UpdateGapMs <= 80)
+                assertTrue("Position must not intermittently stall: $fixedCadence",
+                    fixedCadence.longestUpdateGapMs <= 200)
+                assertTrue("Playback position must track elapsed time: $fixedCadence",
+                    fixedCadence.advanceMs in (fixedCadence.elapsedMs * 7 / 10)..(fixedCadence.elapsedMs * 13 / 10))
+
+                var pausedPosition = 0L
+                instrumentation.runOnMainSync {
+                    fixed.pause()
+                    pausedPosition = fixed.currentPosition
+                }
+                SystemClock.sleep(300)
+                instrumentation.runOnMainSync {
+                    assertEquals("Paused position must remain stable", pausedPosition.toDouble(), fixed.currentPosition.toDouble(), 20.0)
+                    fixed.seekTo(2_000)
+                    fixed.setPlaybackSpeed(2f)
+                }
+                SystemClock.sleep(200)
+                instrumentation.runOnMainSync {
+                    assertEquals("Paused seek must update position", 2_000.0, fixed.currentPosition.toDouble(), 50.0)
+                    fixed.play()
+                }
+                SystemClock.sleep(300)
+                var speedStart = 0L
+                instrumentation.runOnMainSync { speedStart = fixed.currentPosition }
+                SystemClock.sleep(500)
+                instrumentation.runOnMainSync {
+                    assertTrue("Position must follow double-speed playback", fixed.currentPosition - speedStart in 650L..1_400L)
+                    assertTrue(fixed.isPlaying)
+                    assertEquals(null, fixed.playerError)
+                }
+            } finally {
+                instrumentation.runOnMainSync { fixed.release() }
+            }
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
     fun boundedPcmAnalysisCostOnTheDevice() {
         val frames = 4_800
         val pcm = ByteBuffer.allocateDirect(frames * 2 * 4).order(ByteOrder.nativeOrder())
@@ -147,7 +209,53 @@ class PlaybackBeatMeterTest {
         assertTrue("UI envelope must remain cheap", envelopeMs < 100)
     }
 
-    private fun createDeck(meter: PlaybackBeatMeter, file: File): ExoPlayer {
+    private data class PositionCadence(
+        val samples: Int,
+        val updates: Int,
+        val p90UpdateGapMs: Long,
+        val longestUpdateGapMs: Long,
+        val advanceMs: Long,
+        val elapsedMs: Long,
+    )
+
+    private fun samplePositionCadence(deck: ExoPlayer): PositionCadence {
+        val startedAt = SystemClock.elapsedRealtime()
+        var lastUpdateAt = startedAt
+        var firstPosition = 0L
+        var previousPosition = 0L
+        var samples = 0
+        val updateGaps = mutableListOf<Long>()
+        while (SystemClock.elapsedRealtime() - startedAt < 2_500) {
+            var position = 0L
+            instrumentation.runOnMainSync { position = deck.currentPosition }
+            val sampledAt = SystemClock.elapsedRealtime()
+            if (samples == 0) {
+                firstPosition = position
+                lastUpdateAt = sampledAt
+            } else if (position != previousPosition) {
+                updateGaps += sampledAt - lastUpdateAt
+                lastUpdateAt = sampledAt
+            }
+            previousPosition = position
+            samples++
+            SystemClock.sleep(16)
+        }
+        val elapsedMs = SystemClock.elapsedRealtime() - startedAt
+        val sortedGaps = updateGaps.sorted()
+        return PositionCadence(
+            samples, updateGaps.size,
+            sortedGaps.getOrElse(sortedGaps.lastIndex * 9 / 10) { elapsedMs },
+            maxOf(updateGaps.maxOrNull() ?: 0, SystemClock.elapsedRealtime() - lastUpdateAt),
+            previousPosition - firstPosition, elapsedMs,
+        )
+    }
+
+    private fun createDeck(
+        meter: PlaybackBeatMeter,
+        file: File,
+        dynamicSchedulingEnabled: Boolean = false,
+        initialVolume: Float = 1f,
+    ): ExoPlayer {
         lateinit var deck: ExoPlayer
         val ready = CountDownLatch(1)
         instrumentation.runOnMainSync {
@@ -158,12 +266,13 @@ class PlaybackBeatMeterTest {
                         .setEnableAudioOutputPlaybackParameters(true)
                         .setAudioOutputProvider(meter.wrap(AudioTrackAudioOutputProvider.Builder(context).build()))
                         .build()
-            }).build()
+            }).experimentalSetDynamicSchedulingEnabled(dynamicSchedulingEnabled).build()
             deck.addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     if (playbackState == Player.STATE_READY) ready.countDown()
                 }
             })
+            deck.volume = initialVolume
             deck.repeatMode = Player.REPEAT_MODE_ONE
             deck.setMediaItem(MediaItem.fromUri(file.toURI().toString()))
             deck.prepare()
@@ -176,8 +285,8 @@ class PlaybackBeatMeterTest {
         return deck
     }
 
-    private fun makeTone(): File {
-        val frames = 48_000 * 3
+    private fun makeTone(durationSeconds: Int = 3): File {
+        val frames = 48_000 * durationSeconds
         val pcmBytes = frames * 2
         val wav = ByteBuffer.allocate(44 + pcmBytes).order(ByteOrder.LITTLE_ENDIAN)
         wav.put("RIFF".toByteArray()).putInt(36 + pcmBytes).put("WAVEfmt ".toByteArray())
