@@ -93,8 +93,8 @@ android {
             .get()
         minSdk = 33
         targetSdk = 37
-        versionCode = 15
-        versionName = "1.55.0"
+        versionCode = 16
+        versionName = "1.55.1"
         buildConfigField("long", "BUILD_NUMBER", "${buildNumber}L")
         buildConfigField("String", "BUILD_COMMIT_SHA", "\"$buildCommitSha\"")
         buildConfigField("boolean", "BUILD_SOURCE_DIRTY", buildSourceDirty.toString())
@@ -194,6 +194,8 @@ dependencies {
     testRuntimeOnly(libs.zstd.jni)
     testImplementation(libs.kotlinx.coroutines.test)
     androidTestImplementation(libs.androidx.junit)
+    // Use the public input service instead of removed InputManager reflection on API 37.
+    androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
