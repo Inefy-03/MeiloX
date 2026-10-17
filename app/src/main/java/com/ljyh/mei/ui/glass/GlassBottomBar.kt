@@ -24,12 +24,9 @@ import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -74,8 +71,6 @@ import com.kyant.backdrop.shadow.Shadow
 import com.kyant.shapes.Capsule
 import com.ljyh.mei.ui.liquidglass.DampedDragAnimation
 import com.ljyh.mei.ui.liquidglass.InteractiveHighlight
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlin.math.PI
 import kotlin.math.abs
@@ -179,6 +174,7 @@ fun <T> GlassBottomBar(
     val animationScope = rememberCoroutineScope()
     val onExpandState = rememberUpdatedState(onExpand)
     val selectedIndexState = rememberUpdatedState(selectedIndex)
+    val tabItemsState = rememberUpdatedState(tabItems)
 
     BoxWithConstraints(modifier.height(64.dp), contentAlignment = Alignment.CenterStart) {
         val density = LocalDensity.current
@@ -225,7 +221,6 @@ fun <T> GlassBottomBar(
             }
         }
         val offsetAnimation = remember { Animatable(0f) }
-        var currentIndex by remember { mutableIntStateOf(selectedIndex) }
         val dragAnimation = remember(animationScope, tabItems.size) {
             DampedDragAnimation(
                 animationScope = animationScope,
@@ -242,7 +237,9 @@ fun <T> GlassBottomBar(
                         return@DampedDragAnimation
                     }
                     val target = targetValue.fastRoundToInt().fastCoerceIn(0, tabItems.lastIndex)
-                    currentIndex = target
+                    if (target != selectedIndexState.value) {
+                        stableOnSelected(tabItemsState.value[target].key)
+                    }
                     animateToValue(target.toFloat())
                     animationScope.launch {
                         offsetAnimation.animateTo(0f, spring(1f, 300f, 0.5f))
@@ -259,13 +256,9 @@ fun <T> GlassBottomBar(
             )
         }
         LaunchedEffect(selectedIndex, compactMode) {
-            currentIndex = selectedIndex
+            // Route and preference updates only move the indicator. Navigation callbacks
+            // belong to user input, including while the bar is fading out on a detail page.
             dragAnimation.animateToValue(selectedIndex.toFloat())
-        }
-        LaunchedEffect(dragAnimation, stableItems) {
-            snapshotFlow { currentIndex }
-                .drop(1)
-                .collectLatest { index -> stableOnSelected(tabItems[index].key) }
         }
         val interactiveHighlight = remember(
             animationScope,
