@@ -31,11 +31,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import com.ljyh.mei.ui.component.sheet.LocalPlayerSheet
 import com.ljyh.mei.ui.component.sheet.playerArtwork
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
@@ -102,7 +102,9 @@ fun Cover(
         label = "CoverScale"
     )
 
-    val coverScale = if (sheetExpanded) animatedCoverScale else if (isPlaying) 1f else 0.9f
+    val coverScale = rememberUpdatedState(
+        if (sheetExpanded) animatedCoverScale else if (isPlaying) 1f else 0.9f,
+    )
 
     var showFullImage by remember { mutableStateOf(false) }
     Box(
@@ -117,10 +119,13 @@ fun Cover(
             },
             label = "CoverTransition",
             modifier = Modifier.graphicsLayer {
-                scaleX = coverScale
-                scaleY = coverScale
+                scaleX = coverScale.value
+                scaleY = coverScale.value
             }.playerArtwork(
                 circle = coverStyle == CoverStyle.Circle,
+                shadowElevation = { 12.dp },
+                backgroundColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                playbackScale = { coverScale.value },
             )
         ) { url ->
 
@@ -128,8 +133,7 @@ fun Cover(
                 modifier = Modifier
                     .fillMaxSize()
                     .aspectRatio(1f)
-                    .shadow(if (sheet?.state?.isTransitioning == true) 0.dp else 12.dp,
-                        if (sheet?.state?.isTransitioning == true) RectangleShape else coverShape)
+                    .shadow(12.dp, coverShape)
                     .pointerInput(Unit) {
                         detectTapGestures(
                             onDoubleTap = { offset ->
@@ -140,7 +144,7 @@ fun Cover(
                             }
                         )
                     },
-                shape = if (sheet?.state?.isTransitioning == true) RectangleShape else coverShape,
+                shape = coverShape,
                 color = MaterialTheme.colorScheme.surfaceContainerHighest
             ) {
                 AsyncImage(

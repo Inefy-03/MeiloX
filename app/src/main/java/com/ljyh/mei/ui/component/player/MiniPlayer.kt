@@ -190,7 +190,9 @@ private fun MiniPlayerContent(
                 }
                 .then(
                     if (sheet != null) {
-                        Modifier.recordPlayerContent(sheet, sheet.miniContent) { true }
+                        Modifier.recordPlayerContent(sheet, sheet.miniContent, warmWhileVisible = true) {
+                            !sheet.isTransitioning
+                        }
                     } else Modifier,
                 ),
         ) {
@@ -299,7 +301,7 @@ fun MiniMediaInfo(
                         }
                         onCoverBoundsChanged?.invoke(bounds)
                     }
-                    .drawWithContent { if (sheet?.drawsArtworkOverlay != true) drawContent() }
+                    .drawWithContent { if (sheet?.sharesArtwork != true) drawContent() }
                     .clip(ContinuousRoundedRectangle(ThumbnailCornerRadius)),
             ) { cover ->
                 if (cover != null) Image(

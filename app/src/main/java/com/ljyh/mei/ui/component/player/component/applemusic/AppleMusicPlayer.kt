@@ -7,13 +7,12 @@ import androidx.annotation.OptIn
 import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.updateTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -53,20 +52,25 @@ import androidx.compose.ui.Alignment
 import androidx.compose.foundation.Image
 import com.ljyh.mei.ui.component.player.LocalPlayerArtwork
 import com.ljyh.mei.ui.component.sheet.playerArtwork
+import com.ljyh.mei.ui.component.sheet.PlayerArtworkGeometry
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.constrainHeight
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.util.UnstableApi
 import com.kyant.backdrop.Backdrop
@@ -87,12 +91,11 @@ import com.ljyh.mei.ui.component.player.state.PlayerStateContainer
 import com.ljyh.mei.ui.component.sheet.BottomSheet
 import com.ljyh.mei.ui.component.sheet.BottomSheetState
 import com.ljyh.mei.ui.component.sheet.HorizontalSwipeDirection
-import com.ljyh.mei.ui.component.utils.lerp
 import com.ljyh.mei.ui.glass.LocalGlassColors
 import com.ljyh.mei.ui.glass.trackBackdropPosition
 import com.ljyh.mei.ui.model.LyricSource
-import com.ljyh.mei.utils.UnitUtils.toPx
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -134,13 +137,30 @@ fun AppleMusicPlayer(
 
 
     // --- Animation & Geometry Calculation ---
-    val lyricTransition = updateTransition(targetState = showLyrics, label = "LyricMode")
-    val lyricAnimFraction by lyricTransition.animateFloat(
-        label = "Fraction",
-        transitionSpec = { spring(stiffness = Spring.StiffnessLow) }
-    ) { if (it) 1f else 0f }
+    val lyricAnimFraction = remember { Animatable(0f) }
+    LaunchedEffect(showLyrics, sheetExpanded) {
+        // Keep the measured sheet endpoint stable while its shared artwork owns motion.
+        if (sheetExpanded) {
+            lyricAnimFraction.animateTo(
+                if (showLyrics) 1f else 0f,
+                appleMusicLyricSpring(),
+            )
+        }
+    }
 
-    val animatedPlaybackCoverScale by animateFloatAsState(
+    val albumInfoAlpha = remember { derivedStateOf { appleMusicAlbumInfoAlpha(lyricAnimFraction.value) } }
+    val headerInfoAlpha = remember { derivedStateOf { appleMusicHeaderInfoAlpha(lyricAnimFraction.value) } }
+    val albumInfoVisible by remember { derivedStateOf { albumInfoAlpha.value > 0f } }
+    val headerInfoVisible by remember { derivedStateOf { headerInfoAlpha.value > 0f } }
+
+    // Keep the same default fade spring as AnimatedVisibility without disposing lyrics.
+    val lyricVisibilityAlpha = animateFloatAsState(
+        targetValue = if (showLyrics) 1f else 0f,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "LyricsVisibility",
+    )
+
+    val animatedPlaybackCoverScale = animateFloatAsState(
         targetValue = if (isPlaying) 1f else 0.9f,
         animationSpec = if (sheetExpanded) spring(
             dampingRatio = Spring.DampingRatioMediumBouncy,
@@ -148,8 +168,6 @@ fun AppleMusicPlayer(
         ) else androidx.compose.animation.core.snap(),
         label = "AppleMusicCoverScale"
     )
-
-    val playbackCoverScale = if (sheetExpanded) animatedPlaybackCoverScale else if (isPlaying) 1f else 0.9f
 
 
     BoxWithConstraints(
@@ -176,6 +194,19 @@ fun AppleMusicPlayer(
 
         val bottomControlsHeightDp = if (isCompactHeight || isLandscape) 220.dp else 300.dp
         val bottomControlsHeight = with(density) { bottomControlsHeightDp.toPx() }
+        var albumMoreAnchor by remember(screenWidth, maxHeightPx, isLandscape, isCompactHeight) {
+            mutableStateOf<Offset?>(null)
+        }
+        val controlsSpacerHeight = animateDpAsState(
+            targetValue = if (stateContainer.controlsVisible) bottomControlsHeightDp else 16.dp,
+            label = "spacer",
+        )
+        val sourceBadgeAnchorProgress = remember(controlsSpacerHeight, bottomControlsHeightDp) {
+            {
+                ((controlsSpacerHeight.value - 16.dp) / (bottomControlsHeightDp - 16.dp))
+                    .coerceIn(0f, 1f)
+            }
+        }
 
         // --- 动态计算封面大小 ---
         val normalPaddingH = with(density) { (PlayerHorizontalPadding + 24.dp).toPx() }
@@ -184,7 +215,7 @@ fun AppleMusicPlayer(
         val minTopMargin = with(density) { 16.dp.toPx() }
         val availableVerticalSpace = maxHeightPx - bottomControlsHeight - topSafeArea - minTopMargin
 
-        val normalSize = min(maxAvailableWidth, availableVerticalSpace.coerceAtLeast(0f))
+        val normalSize = min(maxAvailableWidth, availableVerticalSpace.coerceAtLeast(0f)).coerceAtLeast(1f)
 
         val realAvailableHeight = (maxHeightPx - bottomControlsHeight - topSafeArea)
         val verticalBias = (realAvailableHeight - normalSize) / 2
@@ -198,19 +229,21 @@ fun AppleMusicPlayer(
         val headerStart = with(density) { PlayerHorizontalPadding.toPx() }
         val headerRadius = with(density) { 4.dp.toPx() }
 
-        // --- 2. 坐标插值 ---
-        val targetSize = lerp(normalSize, headerSize, lyricAnimFraction)
-        val targetTop = lerp(normalTop, headerTop, lyricAnimFraction)
-        val targetStart = lerp(normalStart, headerStart, lyricAnimFraction)
-        val targetRadius = with(density) { lerp(12.dp.toPx(), headerRadius, lyricAnimFraction) }
-
-        // The overlay owns sheet motion. This endpoint only owns lyric/paused artwork layout.
-        val finalSize = targetSize
-        val finalTop = targetTop
-        val finalStart = targetStart
-        val finalRadius = targetRadius
-        val finalCoverScale = lerp(1f, playbackCoverScale, 1f - lyricAnimFraction)
-        val mShadowElevation = 16.dp * (1f - lyricAnimFraction)
+        val normalBounds = Rect(normalStart, normalTop, normalStart + normalSize, normalTop + normalSize)
+        val headerBounds = Rect(headerStart, headerTop, headerStart + headerSize, headerTop + headerSize)
+        val normalRadius = with(density) { 12.dp.toPx() }
+        val normalShadow = with(density) { 16.dp.toPx() }
+        // Keep image measurement stable; only layer properties observe animation frames.
+        val artworkLayoutSize = normalSize.roundToInt().coerceAtLeast(1)
+        val artworkFrame = remember(normalBounds, headerBounds, density, sheetExpanded, isPlaying) {
+            derivedStateOf {
+                appleMusicArtworkFrame(
+                    normalBounds, headerBounds, normalRadius, headerRadius, normalShadow,
+                    if (sheetExpanded) animatedPlaybackCoverScale.value else if (isPlaying) 1f else 0.9f,
+                    lyricAnimFraction.value,
+                )
+            }
+        }
 
         val coverUrl = mediaMetadata?.coverUrl
         // --- 3. UI Structure ---
@@ -274,17 +307,29 @@ fun AppleMusicPlayer(
 
 
                 // Mode B: Lyric Player
-                AnimatedVisibility(
-                    visible = showLyrics,
-                    enter = fadeIn(),
-                    exit = fadeOut(),
-                    modifier = Modifier.fillMaxSize()
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .layout { measurable, constraints ->
+                            val placeable = measurable.measure(constraints)
+                            layout(placeable.width, placeable.height) {
+                                // Premeasure the resident host, but remove hidden input targets.
+                                if (showLyrics || lyricVisibilityAlpha.value > 0f) placeable.place(0, 0)
+                            }
+                        }
+                        .graphicsLayer { alpha = lyricVisibilityAlpha.value }
+                        .then(if (showLyrics && sheetExpanded) Modifier else Modifier.clearAndSetSemantics { }),
                 ) {
                     Column(Modifier.fillMaxSize()) {
                         Spacer(modifier = Modifier.height(with(density) { (headerTop + headerSize).toDp() + 16.dp }))
 
                         LyricScreen(
                             lyricData = lyricLine,
+                            active = showLyrics,
+                            // The header ends 12.dp from the edge, with 10.dp inside Title.
+                            sourceBadgeEndOffset = PlayerHorizontalPadding - 22.dp,
+                            sourceBadgeAnchor = albumMoreAnchor,
+                            sourceBadgeAnchorProgress = sourceBadgeAnchorProgress,
                             playerConnection = stateContainer.playerConnection,
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -309,77 +354,51 @@ fun AppleMusicPlayer(
                             controlsVisible = stateContainer.controlsVisible,
                             onToggleControls = { stateContainer.controlsVisible = it },
                         )
-                        val spacerHeight by animateDpAsState(
-                            targetValue = if (stateContainer.controlsVisible) bottomControlsHeightDp else 16.dp,
-                            label = "spacer"
-                        )
-                        Spacer(modifier = Modifier.height(spacerHeight))
+                        Spacer(modifier = Modifier.layout { measurable, constraints ->
+                            val height = constraints.constrainHeight(controlsSpacerHeight.value.roundToPx())
+                            val placeable = measurable.measure(constraints.copy(minHeight = height, maxHeight = height))
+                            layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+                        })
                     }
                 }
 
 
                 // Mode C: Header Info
                 if (mediaMetadata != null) {
-                    val fraction = lyricAnimFraction
-                    val enterThreshold = 0.4f
+                    val headerTextWidth =
+                        screenWidth - with(density) { (headerStart + headerSize).toDp() } - 24.dp
 
-                    val headerTextAlpha = if (fraction > enterThreshold) {
-                        ((fraction - enterThreshold) / (1f - enterThreshold)).coerceIn(
-                            0f,
-                            1f
-                        )
-                    } else {
-                        0f
-                    }
-
-                    if (headerTextAlpha > 0.01f) {
-                        val headerTextWidth =
-                            screenWidth - with(density) { (headerStart + headerSize).toDp() } - 24.dp
-                        val slideUpOffset =
-                            with(density) { (20.dp.toPx() * (1f - fraction)).toInt() }
-
-                        val currentX = (targetStart + headerSize + 12.dp.toPx(context)).toInt()
-                        val fixedY = headerTop.toInt() + slideUpOffset
-
-                        Box(
-                            modifier = Modifier
-                                .graphicsLayer {
-                                    alpha = headerTextAlpha
-                                    val scale = 0.9f + (0.1f * fraction)
-                                    scaleX = scale
-                                    scaleY = scale
-                                }
-                                .offset {
-                                    IntOffset(
-                                        x = currentX,
-                                        y = fixedY
+                    Box(
+                        modifier = Modifier
+                            .offset(
+                                x = with(density) { (headerStart + headerSize).toDp() } + 12.dp,
+                                y = with(density) { headerTop.toDp() },
+                            )
+                            .height(with(density) { headerSize.toDp() })
+                            .width(headerTextWidth)
+                            .playerInfoFade(headerInfoAlpha, headerInfoVisible),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        Title(
+                            title = mediaMetadata!!.title,
+                            subTitle = mediaMetadata!!.artists.joinToString { it.name },
+                            isLiked = isLiked,
+                            onLikeClick = { mediaMetadata?.let { stateContainer.playerViewModel.like(it.id.toString()) } },
+                            onMoreClick = { overlayHandler.showMoreAction() },
+                            onTitleClick = {
+                                mediaMetadata?.let {
+                                    overlayHandler.showAlbumArtist(
+                                        album = it.album,
+                                        artists = it.artists,
+                                        cover = it.coverUrl
                                     )
                                 }
-                                .height(with(density) { headerSize.toDp() })
-                                .width(headerTextWidth),
-                            contentAlignment = Alignment.CenterStart
-                        ) {
-                            Title(
-                                title = mediaMetadata!!.title,
-                                subTitle = mediaMetadata!!.artists.joinToString { it.name },
-                                isLiked = isLiked,
-                                onLikeClick = { mediaMetadata?.let { stateContainer.playerViewModel.like(it.id.toString()) } },
-                                onMoreClick = { overlayHandler.showMoreAction() },
-                                onTitleClick = {
-                                    mediaMetadata?.let {
-                                        overlayHandler.showAlbumArtist(
-                                            album = it.album,
-                                            artists = it.artists,
-                                            cover = it.coverUrl
-                                        )
-                                    }
-                                },
-                                titleStyle = MaterialTheme.typography.titleMedium,
-                                subTitleStyle = MaterialTheme.typography.bodySmall,
-                                needShadow = false,
-                                modifier = Modifier.padding(vertical = 2.dp)
-                            )
-                        }
+                            },
+                            titleStyle = MaterialTheme.typography.titleMedium,
+                            subTitleStyle = MaterialTheme.typography.bodySmall,
+                            needShadow = false,
+                            modifier = Modifier.padding(vertical = 2.dp)
+                        )
                     }
                 }
 
@@ -400,9 +419,7 @@ fun AppleMusicPlayer(
                     ) {
                         Column(Modifier.fillMaxWidth()) {
 
-                            val isTitleVisible = !showLyrics && (!isCompactHeight && !isLandscape)
-
-                            if (isTitleVisible) {
+                            if (!isCompactHeight && !isLandscape) {
                                 mediaMetadata?.let {
                                     Title(
                                         title = it.title,
@@ -410,6 +427,9 @@ fun AppleMusicPlayer(
                                         isLiked = isLiked,
                                         onLikeClick = { stateContainer.playerViewModel.like(it.id.toString()) },
                                         onMoreClick = { overlayHandler.showMoreAction() },
+                                        onMoreButtonPositioned = {
+                                            if (!showLyrics) albumMoreAnchor = it.positionInRoot()
+                                        },
                                         onTitleClick = {
                                             overlayHandler.showAlbumArtist(
                                                 album = it.album,
@@ -419,6 +439,7 @@ fun AppleMusicPlayer(
                                         },
                                         modifier = Modifier
                                             .fillMaxWidth()
+                                            .playerInfoFade(albumInfoAlpha, albumInfoVisible)
                                             .padding(horizontal = PlayerHorizontalPadding)
                                             .padding(bottom = 12.dp)
                                             .padding(start = 8.dp)
@@ -469,23 +490,38 @@ fun AppleMusicPlayer(
                     label = "CoverTransition",
                     modifier = Modifier
                         .graphicsLayer {
-                            alpha = 1f
-                            translationX = finalStart
-                            translationY = finalTop
-                            scaleX = finalCoverScale
-                            scaleY = finalCoverScale
-                            transformOrigin = TransformOrigin.Center
-                            shadowElevation = if (sheetExpanded) mShadowElevation.toPx() else 0f
-                            shape = ContinuousRoundedRectangle(finalRadius)
+                            val frame = artworkFrame.value
+                            transformOrigin = TransformOrigin(0f, 0f)
+                            translationX = frame.bounds.left
+                            translationY = frame.bounds.top
+                            scaleX = frame.bounds.width / size.width.coerceAtLeast(1f)
+                            scaleY = frame.bounds.height / size.height.coerceAtLeast(1f)
+                        }
+                        .size(with(density) { artworkLayoutSize.toDp() })
+                        .playerArtwork(
+                            geometry = {
+                                PlayerArtworkGeometry(
+                                    artworkFrame.value.bounds,
+                                    IntSize(artworkLayoutSize, artworkLayoutSize),
+                                )
+                            },
+                            cornerRadius = {
+                                val frame = artworkFrame.value
+                                with(density) { (frame.cornerRadius * artworkLayoutSize / frame.bounds.width.coerceAtLeast(1f)).toDp() }
+                            },
+                            shadowElevation = {
+                                val frame = artworkFrame.value
+                                with(density) { (frame.shadowElevation * artworkLayoutSize / frame.bounds.width.coerceAtLeast(1f)).toDp() }
+                            },
+                            trackContainerTop = { showLyrics || lyricAnimFraction.value > 0f },
+                        )
+                        .graphicsLayer {
+                            val frame = artworkFrame.value
+                            val scale = frame.bounds.width / size.width.coerceAtLeast(1f)
+                            shadowElevation = frame.shadowElevation / scale.coerceAtLeast(0.001f)
+                            shape = ContinuousRoundedRectangle(frame.cornerRadius / scale.coerceAtLeast(0.001f))
                             clip = true
                         }
-                        .size(
-                            width = with(density) { finalSize.toDp() },
-                            height = with(density) { finalSize.toDp() }
-                        )
-                        .playerArtwork(
-                            cornerRadius = with(density) { finalRadius.toDp() },
-                        )
                         .then(
                             if (sheetExpanded) Modifier.clickable { showLyrics = !showLyrics }
                             else Modifier.clearAndSetSemantics { },
@@ -511,3 +547,14 @@ fun AppleMusicPlayer(
         }
     }
 }
+
+/** Retain text measurement while transparent groups have neither layout height nor input. */
+private fun Modifier.playerInfoFade(alpha: State<Float>, visible: Boolean): Modifier =
+    layout { measurable, constraints ->
+        val placeable = measurable.measure(constraints)
+        layout(placeable.width, if (visible) placeable.height else 0) {
+            if (visible) placeable.place(0, 0)
+        }
+    }
+        .graphicsLayer { this.alpha = alpha.value }
+        .then(if (visible) Modifier else Modifier.clearAndSetSemantics { })
