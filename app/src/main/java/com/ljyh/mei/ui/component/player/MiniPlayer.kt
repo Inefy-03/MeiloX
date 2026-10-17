@@ -173,10 +173,15 @@ private fun MiniPlayerContent(
         shape = Capsule(),
         onVisualBoundsChanged = { bounds, light -> sheet?.updateMiniPressHighlight(bounds, light) },
         cancelPressFeedback = sheetTransitioning,
+        pressHighlight = remember(sheet) { { sheet?.collapsedPressHighlight } },
         morphProgress = compactProgress,
         morphVerticalTravel = NavigationBarHeight - 16.dp,
         style = GlassSurfaceStyle.Navigation,
-        onClick = onClick,
+        onClick = {
+            sheet?.prepareTransition()
+            sheet?.releasePressHighlight()
+            onClick()
+        },
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,

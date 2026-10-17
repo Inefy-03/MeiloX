@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.drawscope.inset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
@@ -44,6 +45,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import kotlin.math.ceil
 import com.kyant.backdrop.Backdrop
+import com.ljyh.mei.ui.liquidglass.PressHighlightRenderer
 
 // These passes only carry an already blurred backdrop. Keep the moving outline, tint,
 // highlight and foreground at native resolution while reducing filter fill and bandwidth.
@@ -85,6 +87,7 @@ internal class GlassMorphRenderer(
     private val shader = if (appearance.usesRefraction) RuntimeShader(TransitionRefractionShader) else null
     private val highlight = RuntimeShader(TransitionHighlightShader)
     private val highlightBrush = ShaderBrush(highlight)
+    private val pressLight = PressHighlightRenderer()
     private var recordedViewport: Rect? = null
     private val sourceEffect = if (appearance.usesBackdrop) run {
         val color = RenderEffect.createColorFilterEffect(
@@ -114,6 +117,8 @@ internal class GlassMorphRenderer(
         refractionAmount: Dp = 24.dp,
         navigationOutline: Boolean = true,
         sampleScale: Offset = Offset(1f, 1f),
+        pressHighlight: GlassPressHighlight? = null,
+        pressHighlightBounds: Rect? = null,
     ) = with(scope) {
         if (bounds.isEmpty || viewport.isEmpty) return@with
         val outline = shape.createOutline(bounds.size, layoutDirection, this)
@@ -188,6 +193,19 @@ internal class GlassMorphRenderer(
         highlight.setFloatUniform("halfSize", bounds.width / 2f, bounds.height / 2f)
         highlight.setFloatUniform("radius", radius)
         highlight.setFloatUniform("opacity", highlightAlpha)
+        // This rectangle anchors the light field; only the moving glass outline clips it.
+        val lightBounds = pressHighlightBounds ?: bounds
+        val lightPosition = pressHighlight?.position ?: Offset(0.5f, 0.5f)
+        highlight.setFloatUniform(
+            "pressPosition",
+            lightBounds.left + lightBounds.width * lightPosition.x.coerceIn(0f, 1f),
+            lightBounds.top + lightBounds.height * lightPosition.y.coerceIn(0f, 1f),
+        )
+        highlight.setFloatUniform("pressRadius", (lightBounds.size.minDimension * 1.5f).coerceAtLeast(1f))
+        highlight.setFloatUniform(
+            "pressOpacity",
+            if (pressHighlightBounds != null) 0.5f * 0.38f * (pressHighlight?.progress ?: 0f) else 0f,
+        )
         clipGlassShape(bounds, radius, shape, path) {
             if (appearance.usesBackdrop) {
                 withTransform({
@@ -208,6 +226,20 @@ internal class GlassMorphRenderer(
                 style = Stroke(ceil(0.5.dp.toPx()) * 2f),
                 blendMode = androidx.compose.ui.graphics.BlendMode.Plus,
             )
+            if (pressHighlight != null && pressHighlight.progress > 0f) {
+                inset(bounds.left, bounds.top, size.width - bounds.right, size.height - bounds.bottom) {
+                    val source = lightBounds.translate(-bounds.topLeft)
+                    pressLight.draw(
+                        this,
+                        pressHighlight.progress,
+                        source.topLeft + Offset(
+                            source.width * pressHighlight.position.x,
+                            source.height * pressHighlight.position.y,
+                        ),
+                        sourceBounds = source,
+                    )
+                }
+            }
         }
     }
 }
@@ -334,6 +366,9 @@ uniform float2 center;
 uniform float2 halfSize;
 uniform float radius;
 uniform float opacity;
+uniform float2 pressPosition;
+uniform float pressRadius;
+uniform float pressOpacity;
 half4 main(float2 coord) {
     float2 p = coord - center;
     float r = min(radius * 1.5, min(halfSize.x, halfSize.y));
@@ -342,6 +377,8 @@ half4 main(float2 coord) {
     float2 v = max(corner, 0.0);
     float2 grad = max(corner.x, corner.y) >= 0.0
         ? v / max(length(v), 0.0001) : float2(gx, 1.0 - gx);
-    return half4(opacity * abs(grad.y));
+    float pressDistance = distance(coord, pressPosition);
+    float pressFalloff = 1.0 - smoothstep(pressRadius * 0.5, pressRadius, pressDistance);
+    return half4((opacity + pressOpacity * pressFalloff) * abs(grad.y));
 }
 """
