@@ -383,14 +383,13 @@ private class PlayerHitShape(private val bounds: Rect, private val radius: Float
     }
 }
 
-/** The native underlay keeps its window hole; only its canvas clip is split into small tiles. */
-private fun Modifier.clipPlayerSurface(
+/** Clip the retained mesh background to the moving player shell. */
+private fun Modifier.clipPlayerBackground(
     layers: PlayerSheetLayers,
     expandedCornerRadius: Float,
 ): Modifier = graphicsLayer {
-    // Canvas clipping alone leaves the full-screen AndroidView in the hit-test tree.
-    // A rectangular outline rejects touches in the exposed page without reintroducing
-    // the full-screen path mask. The tiled draw clip below keeps the exact corners.
+    // Bound the full-screen background layer to the visible shell during motion.
+    // The tiled draw clip below keeps the exact corners without a full-screen path mask.
     clip = layers.state.isTransitioning
     if (clip) {
         val bounds = playerContainerRect(layers.sourceContainer, layers.hostBounds, layers.state.progress)
@@ -466,8 +465,8 @@ fun BottomSheet(
                 content = collapsedContent,
             )
         }
-        // Draw glass below the real Surface. The Surface's alpha reveals this glass during
-        // motion; drawing glass above it would tint an already opaque player background.
+        // Draw transition glass below the mesh background. The background's alpha reveals
+        // this glass during motion without tinting the fully expanded player background.
         if (active && transitionGeometryReady) {
             PlayerTransitionGlass(
                 layers = layers,
@@ -475,20 +474,19 @@ fun BottomSheet(
                 expandedCornerRadius = expandedCornerRadius,
             )
         }
-        // Retain the native Surface across the collapsed anchor. Recreating it on every
-        // opening also recreates EGL, uploads the album and allocates the mesh framebuffer.
-        // FluidBackground stops rendering/capture and makes the Surface transparent at rest.
+        // Retain the mesh state and album across the collapsed anchor. FluidBackground
+        // stops advancing hidden frames while keeping the next opening continuous.
         if (state.hasBeenShown) {
             Box(
                 Modifier.fillMaxSize()
                     .layout { measurable, constraints ->
                         val placeable = measurable.measure(constraints)
                         layout(placeable.width, placeable.height) {
-                            // An invisible AndroidView still participates in hit testing.
+                            // Keep the hidden background out of drawing and hit testing.
                             if (active || expanded) placeable.place(0, 0)
                         }
                     }
-                    .clipPlayerSurface(layers, expandedCornerRadius)
+                    .clipPlayerBackground(layers, expandedCornerRadius)
                     .clearAndSetSemantics { },
             ) {
                 backgroundContent()
@@ -521,7 +519,7 @@ fun BottomSheet(
                 val globalBounds = playerContainerRect(layers.sourceContainer, layers.hostBounds, p)
                 val bounds = globalBounds.translate(-layers.hostBounds.topLeft)
                 // This snapshot contains inset controls, not the visible shell. The shell
-                // and native background retain their continuous corner clip separately.
+                // and mesh background retain their continuous corner clip separately.
                 // Replaying the text/icon display lists in seven corner tiles multiplies
                 // command preparation even when a tile contains no visible controls.
                 clipRect(bounds.left, bounds.top, bounds.right, bounds.bottom) {
@@ -553,7 +551,7 @@ fun BottomSheet(
         }
         if (active) {
             // Only the empty input surface is remeasured. Its bounds and continuous corners
-            // follow the drawn shell; the full-sized snapshot/GL hosts keep their dimensions.
+            // follow the drawn shell; the full-sized snapshot/background hosts keep their dimensions.
             Box(Modifier
                 .layout { measurable, constraints ->
                     val bounds = playerContainerRect(layers.sourceContainer, layers.hostBounds, state.progress)

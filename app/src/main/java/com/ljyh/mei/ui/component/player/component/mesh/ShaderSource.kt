@@ -1,110 +1,42 @@
 package com.ljyh.mei.ui.component.player.component.mesh
 
-object ShaderSource {
-
-    const val MESH_VERTEX_SHADER = """#version 300 es
-precision highp float;
-precision highp int;
-
-in vec2 a_pos;
-in vec3 a_color;
-in vec2 a_uv;
-
-out vec3 v_color;
-out vec2 v_uv;
-
-uniform float u_aspect;
-
-void main() {
-    v_color = a_color;
-    v_uv = a_uv;
-    vec2 pos = a_pos;
-    if (u_aspect > 1.0) {
-        pos.y *= u_aspect;
-    } else {
-        pos.x /= u_aspect;
-    }
-    gl_Position = vec4(pos, 0.0, 1.0);
-}
-"""
-
-    const val MESH_FRAGMENT_SHADER = """#version 300 es
-precision highp float;
-precision highp int;
-
-in vec3 v_color;
-in vec2 v_uv;
-
-uniform sampler2D u_texture;
-uniform float u_time;
+internal object ShaderSource {
+    const val MESH_SHADER = """
+uniform shader albumTexture;
+uniform float2 textureSize;
+uniform float time;
 // Precomputed once per frame: scale, contrast, saturation.
-uniform vec3 u_audioResponse;
+uniform float3 audioResponse;
 
-out vec4 fragColor;
-
-float gradientNoise(vec2 uv) {
-    return fract(52.9829189 * fract(dot(uv, vec2(0.06711056, 0.00583715))));
+float gradientNoise(float2 position) {
+    return fract(52.9829189 * fract(dot(position, float2(0.06711056, 0.00583715))));
 }
 
-vec2 rot(vec2 v, float angle) {
+float2 rotate(float2 value, float angle) {
     float s = sin(angle);
     float c = cos(angle);
-    return vec2(c * v.x - s * v.y, s * v.x + c * v.y);
+    return float2(c * value.x - s * value.y, s * value.x + c * value.y);
 }
 
-void main() {
-    float dither = gradientNoise(gl_FragCoord.xy) / 255.0 - 0.5 / 255.0;
-
-    vec2 centered = v_uv - vec2(0.2);
-    vec2 rotated = rot(centered, u_time * 2.0);
-    vec2 finalUV = rotated / u_audioResponse.x + vec2(0.5);
-
-    vec4 result = texture(u_texture, finalUV);
-
-    result.rgb *= v_color;
-    result.rgb = (result.rgb - vec3(0.5)) * u_audioResponse.y + vec3(0.5);
-    float luminance = dot(result.rgb, vec3(0.2126, 0.7152, 0.0722));
-    result.rgb = mix(vec3(luminance), result.rgb, u_audioResponse.z);
-
-    result.rgb += vec3(dither);
-
-    float dist = distance(v_uv, vec2(0.5));
+half4 main(float2 uv) {
+    // drawVertices supplies interpolated mesh UVs as shader coordinates. Using these for
+    // grain keeps the dither amplitude, with at most 1/255 deviation from screen-space noise.
+    float dither = gradientNoise(uv * 1440.0) / 255.0 - 0.5 / 255.0;
+    float2 centered = uv - float2(0.2);
+    float2 rotated = rotate(centered, time * 2.0);
+    float2 finalUV = rotated / audioResponse.x + float2(0.5);
+    half4 result = albumTexture.eval(finalUV * textureSize);
+    result.rgb = (result.rgb - half3(0.5)) * audioResponse.y + half3(0.5);
+    float luminance = dot(result.rgb, half3(0.2126, 0.7152, 0.0722));
+    result.rgb = mix(half3(luminance), result.rgb, audioResponse.z);
+    result.rgb += half3(dither);
+    float dist = distance(uv, float2(0.5));
     float vignette = 1.0 - smoothstep(0.3, 0.8, dist);
     result.rgb *= 0.6 + vignette * 0.4;
-
-    fragColor = result;
-}
-"""
-
-    const val QUAD_VERTEX_SHADER = """#version 300 es
-precision highp float;
-precision highp int;
-
-in vec2 a_pos;
-in vec2 a_texCoord;
-
-out vec2 v_texCoord;
-
-void main() {
-    v_texCoord = a_texCoord;
-    gl_Position = vec4(a_pos, 0.0, 1.0);
-}
-"""
-
-    const val QUAD_FRAGMENT_SHADER = """#version 300 es
-precision highp float;
-precision highp int;
-
-in vec2 v_texCoord;
-
-uniform sampler2D u_texture;
-uniform float u_alpha;
-
-out vec4 fragColor;
-
-void main() {
-    vec4 color = texture(u_texture, v_texCoord);
-    fragColor = vec4(color.rgb, color.a * u_alpha);
+    // The old RGBA8 FBO clamped RGB before its quad applied SRC_ALPHA. Canvas expects
+    // premultiplied output, so retain that texture-alpha factor here; the layer owns fade.
+    result.rgb = clamp(result.rgb, half3(0.0), half3(1.0)) * result.a;
+    return result;
 }
 """
 }

@@ -1,116 +1,151 @@
 package com.ljyh.mei.ui.component.player.component.mesh
 
-import android.opengl.EGL14
-import android.opengl.GLES30
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
+import android.graphics.Bitmap
+import android.graphics.Color
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.junit4.ComposeContentTestRule
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.unit.dp
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.ljyh.mei.playback.PlaybackSpectrum
 import kotlin.math.abs
+import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
+import org.junit.runner.RunWith
 
+@RunWith(AndroidJUnit4::class)
 class MeshAudioResponseTest {
+    @get:Rule val compose = createComposeRule()
+
     @Test
-    fun maximumResponseKeepsNeutralArtworkOpaqueAndColoredArtworkMoves() {
-        val display = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
-        val versions = IntArray(2)
-        check(EGL14.eglInitialize(display, versions, 0, versions, 1))
-        val configs = arrayOfNulls<android.opengl.EGLConfig>(1)
-        val count = IntArray(1)
-        check(EGL14.eglChooseConfig(display, intArrayOf(
-            EGL14.EGL_RENDERABLE_TYPE, 0x40, EGL14.EGL_SURFACE_TYPE, EGL14.EGL_PBUFFER_BIT,
-            EGL14.EGL_RED_SIZE, 8, EGL14.EGL_GREEN_SIZE, 8, EGL14.EGL_BLUE_SIZE, 8, EGL14.EGL_ALPHA_SIZE, 8,
-            EGL14.EGL_NONE), 0, configs, 0, 1, count, 0))
-        val context = EGL14.eglCreateContext(display, configs[0], EGL14.EGL_NO_CONTEXT,
-            intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 3, EGL14.EGL_NONE), 0)
-        val surface = EGL14.eglCreatePbufferSurface(display, configs[0],
-            intArrayOf(EGL14.EGL_WIDTH, 64, EGL14.EGL_HEIGHT, 64, EGL14.EGL_NONE), 0)
-        check(EGL14.eglMakeCurrent(display, surface, surface, context))
+    fun maximumResponseKeepsNeutralArtworkOpaqueAndMovesColoredArtwork() {
+        val renderer = MeshGradientRenderer().apply {
+            flowSpeed = 0f
+            // The album color pipeline maps this gray to the shader's neutral 128.
+            setAlbum(meshTestAlbum(Color.rgb(191, 191, 191)))
+            advanceFrame(StartNanos)
+        }
+        val host = MeshRenderTestHost(compose, renderer)
+        host.show()
+        val neutral = host.capture()
+        val peak = host.capture {
+            renderer.audioStrength = 1f
+            renderer.spectrum = PlaybackSpectrum(1f, 1f, 1f, 1f)
+            repeat(12) { renderer.advanceFrame(StartNanos + (it + 1) * FrameNanos) }
+        }
+        neutral.indices.forEach { index ->
+            assertTrue("Peak response must keep neutral artwork stable at pixel $index",
+                colorDistance(neutral[index], peak[index]) <= 2)
+            assertTrue("Peak response must remain opaque at pixel $index", Color.alpha(peak[index]) == 255)
+        }
+        assertArrayEquals("Drawing the same frame twice must preserve backdrop sampling", peak, host.capture())
+
+        val colored = host.capture {
+            renderer.audioStrength = 0f
+            renderer.spectrum = PlaybackSpectrum.Zero
+            renderer.setAlbum(meshTestAlbum())
+            repeat(10) { renderer.advanceFrame(StartNanos + (it + 13) * FrameNanos) }
+        }
+        val expanded = host.capture {
+            renderer.audioStrength = 1f
+            renderer.spectrum = PlaybackSpectrum(1f, 1f, 1f, 1f)
+            repeat(12) { renderer.advanceFrame(StartNanos + (it + 23) * FrameNanos) }
+        }
+        val changed = colored.indices.count { colorDistance(colored[it], expanded[it]) > 5 }
+        assertTrue("Audio must move the artwork spatially", changed > colored.size / 4)
+        assertTrue("RuntimeShader must render visible artwork", colored.any {
+            Color.red(it) > 24 || Color.green(it) > 24 || Color.blue(it) > 24
+        })
+        val paused = host.capture {
+            renderer.isPlaying = false
+            renderer.audioStrength = 0f
+        }
+        assertArrayEquals("Disabling audio while paused must restore the baseline without another tick",
+            colored, paused)
+    }
+
+    @Test
+    fun preparingAlreadySizedArtworkPreservesTheBorrowedSource() {
+        val source = Bitmap.createBitmap(32, 32, Bitmap.Config.ARGB_8888).apply {
+            eraseColor(Color.rgb(210, 80, 40))
+        }
+        val expected = source.getPixel(0, 0)
         try {
-            fun compile(type: Int, source: String): Int {
-                val shader = GLES30.glCreateShader(type)
-                GLES30.glShaderSource(shader, source)
-                GLES30.glCompileShader(shader)
-                val status = IntArray(1)
-                GLES30.glGetShaderiv(shader, GLES30.GL_COMPILE_STATUS, status, 0)
-                check(status[0] != 0) { GLES30.glGetShaderInfoLog(shader) }
-                return shader
-            }
-            val vertex = compile(GLES30.GL_VERTEX_SHADER, ShaderSource.MESH_VERTEX_SHADER)
-            val fragment = compile(GLES30.GL_FRAGMENT_SHADER, ShaderSource.MESH_FRAGMENT_SHADER)
-            val program = GLES30.glCreateProgram()
-            GLES30.glAttachShader(program, vertex)
-            GLES30.glAttachShader(program, fragment)
-            GLES30.glLinkProgram(program)
-            val status = IntArray(1)
-            GLES30.glGetProgramiv(program, GLES30.GL_LINK_STATUS, status, 0)
-            check(status[0] != 0) { GLES30.glGetProgramInfoLog(program) }
-            GLES30.glDeleteShader(vertex)
-            GLES30.glDeleteShader(fragment)
-            GLES30.glUseProgram(program)
-            val vertices = ByteBuffer.allocateDirect(28 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
-            vertices.put(floatArrayOf(-1f,-1f,1f,1f,1f,0f,0f, 1f,-1f,1f,1f,1f,1f,0f,
-                -1f,1f,1f,1f,1f,0f,1f, 1f,1f,1f,1f,1f,1f,1f)).flip()
-            val buffers = IntArray(1)
-            GLES30.glGenBuffers(1, buffers, 0)
-            GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, buffers[0])
-            GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, 28 * 4, vertices, GLES30.GL_STATIC_DRAW)
-            for ((name, size, offset) in listOf(Triple("a_pos", 2, 0), Triple("a_color", 3, 8), Triple("a_uv", 2, 20))) {
-                val location = GLES30.glGetAttribLocation(program, name)
-                GLES30.glEnableVertexAttribArray(location)
-                GLES30.glVertexAttribPointer(location, size, GLES30.GL_FLOAT, false, 28, offset)
-            }
-            GLES30.glUniform1f(GLES30.glGetUniformLocation(program, "u_aspect"), 1f)
-            GLES30.glUniform1f(GLES30.glGetUniformLocation(program, "u_time"), 0f)
-            GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "u_texture"), 0)
-            val texture = IntArray(1)
-            GLES30.glGenTextures(1, texture, 0)
-            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, texture[0])
-            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
-            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
-            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_MIRRORED_REPEAT)
-            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_MIRRORED_REPEAT)
-            val artwork = ByteBuffer.allocateDirect(64 * 64 * 4)
-            fun upload(colored: Boolean) {
-                artwork.clear()
-                repeat(64 * 64) { i ->
-                    artwork.put(if (colored) ((i % 64) * 4).toByte() else 128.toByte())
-                    artwork.put(if (colored) ((i / 64) * 4).toByte() else 128.toByte())
-                    artwork.put(128.toByte()).put(255.toByte())
-                }
-                artwork.flip()
-                GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GLES30.GL_RGBA, 64, 64, 0,
-                    GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, artwork)
-            }
-            fun render(scale: Float, contrast: Float, saturation: Float): ByteBuffer {
-                GLES30.glViewport(0, 0, 64, 64)
-                GLES30.glUniform3f(GLES30.glGetUniformLocation(program, "u_audioResponse"), scale, contrast, saturation)
-                GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
-                val pixels = ByteBuffer.allocateDirect(64 * 64 * 4)
-                GLES30.glReadPixels(0, 0, 64, 64, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, pixels)
-                check(GLES30.glGetError() == GLES30.GL_NO_ERROR)
-                return pixels
-            }
-            upload(false)
-            val neutral = render(1f, 1f, 1f)
-            val peak = render(1.66f, 1.076f, 1.166f)
-            for (i in 0 until neutral.capacity()) {
-                assertTrue("Uniform neutral artwork must not flash or lose opacity at peak: byte $i",
-                    abs((neutral[i].toInt() and 255) - (peak[i].toInt() and 255)) <= 1)
-                if (i % 4 == 3) assertTrue((peak[i].toInt() and 255) == 255)
-            }
-            upload(true)
-            val rest = render(1f, 1f, 1f)
-            val expanded = render(1.66f, 1f, 1f)
-            val changed = (0 until rest.capacity()).count { abs((rest[it].toInt() and 255) - (expanded[it].toInt() and 255)) > 5 }
-            assertTrue("Audio must move the artwork spatially", changed > 1_000)
-            GLES30.glDeleteTextures(1, texture, 0)
-            GLES30.glDeleteBuffers(1, buffers, 0)
-            GLES30.glDeleteProgram(program)
+            MeshGradientRenderer.prepareAlbum(source, 50, IdentityPreset)
+            assertFalse("Texture preparation must not recycle a borrowed 32px cover", source.isRecycled)
+            assertEquals("Texture preparation must not modify the source pixels", expected, source.getPixel(0, 0))
         } finally {
-            EGL14.eglMakeCurrent(display, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT)
-            EGL14.eglDestroySurface(display, surface)
-            EGL14.eglDestroyContext(display, context)
-            EGL14.eglTerminate(display)
+            source.recycle()
         }
     }
 }
+
+/** Exercises the actual hardware Compose draw path, including the recorded mesh layer. */
+internal class MeshRenderTestHost(
+    private val compose: ComposeContentTestRule,
+    private val renderer: MeshGradientRenderer,
+) {
+    private val redrawGeneration = mutableIntStateOf(0)
+
+    fun show() {
+        compose.setContent {
+            val layer = rememberGraphicsLayer()
+            Canvas(Modifier.size(96.dp).testTag("mesh")) {
+                // Renderer uniforms are intentionally not Compose state. This explicitly
+                // invalidates the same draw node when the test changes them.
+                redrawGeneration.intValue
+                renderer.draw(this, layer, 1f)
+            }
+        }
+    }
+
+    fun capture(update: () -> Unit = {}): IntArray {
+        compose.runOnIdle {
+            update()
+            redrawGeneration.intValue++
+        }
+        val image = compose.onNodeWithTag("mesh").captureToImage()
+        return IntArray(image.width * image.height).also { image.readPixels(it) }
+    }
+}
+
+internal fun meshTestAlbum(solidColor: Int? = null): MeshAlbum {
+    val size = 64
+    val source = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    source.setPixels(IntArray(size * size) { index ->
+        solidColor ?: Color.rgb(40 + index % size * 3, 30 + index / size * 3,
+            64 + ((index % size + index / size) % size) * 2)
+    }, 0, size, 0, 0, size, size)
+    return try {
+        MeshGradientRenderer.prepareAlbum(source, 50, IdentityPreset)
+    } finally {
+        source.recycle()
+    }
+}
+
+internal fun colorDistance(first: Int, second: Int): Int = maxOf(
+    abs(Color.red(first) - Color.red(second)),
+    abs(Color.green(first) - Color.green(second)),
+    abs(Color.blue(first) - Color.blue(second)),
+)
+
+internal const val StartNanos = 1_000_000_000L
+internal const val FrameNanos = 100_000_000L
+
+private val IdentityPreset = ControlPointPreset(2, 2, listOf(
+    ControlPointConf(0, 0, -1f, -1f, 0f, 0f, 1f, 1f),
+    ControlPointConf(1, 0, 1f, -1f, 0f, 0f, 1f, 1f),
+    ControlPointConf(0, 1, -1f, 1f, 0f, 0f, 1f, 1f),
+    ControlPointConf(1, 1, 1f, 1f, 0f, 0f, 1f, 1f),
+))

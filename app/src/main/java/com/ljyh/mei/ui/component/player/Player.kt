@@ -6,11 +6,9 @@ import androidx.annotation.RequiresApi
 import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.foundation.layout.Box
@@ -19,10 +17,7 @@ import com.ljyh.mei.ui.component.sheet.LocalPlayerSheet
 import com.ljyh.mei.ui.component.sheet.rememberPlayerSheetLayers
 import com.ljyh.mei.ui.component.sheet.PlayerSheetArtworkOverlay
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntSize
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.media3.common.util.UnstableApi
 import com.ljyh.mei.constants.PlayerStyle
@@ -56,8 +51,6 @@ import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 
 internal val LocalPlayerArtwork = staticCompositionLocalOf<Pair<String, androidx.compose.ui.graphics.painter.Painter>?> { null }
 
-/** Publishes a capturable frame for the player's native GL background. */
-val LocalPlayerBackdropFrame = staticCompositionLocalOf<MutableState<ImageBitmap?>?> { null }
 internal val LocalPlayerBackgroundReadyChanged = staticCompositionLocalOf<(Boolean) -> Unit> { {} }
 
 @OptIn(UnstableApi::class)
@@ -76,26 +69,11 @@ fun BottomSheetPlayer(
     val navController = LocalNavController.current
     val device = rememberDeviceInfo()
     val collapsedBackdrop = LocalGlassBackdrop.current
-    val backdropFrame = remember { mutableStateOf<ImageBitmap?>(null) }
-    // GLSurfaceView owns a separate Surface and must never be drawn again inside a Compose
-    // recording layer. A dedicated, empty Compose source records the latest PixelCopy frame.
-    val playerBackgroundBackdrop = rememberLayerBackdrop(
-        onDraw = {
-            backdropFrame.value?.let { frame ->
-                val scale = maxOf(size.width / frame.width, size.height / frame.height)
-                val w = frame.width * scale
-                val h = frame.height * scale
-                withTransform({
-                    translate(left = (size.width - w) / 2f, top = (size.height - h) / 2f)
-                }) {
-                    drawImage(frame, dstSize = IntSize(w.toInt(), h.toInt()))
-                }
-            }
-        },
-    )
-    // Foreground content is a regular Compose layer, so it can be recorded independently
-    // without ever touching the native GL Surface. Window-space wrappers keep both sources
-    // stable when a Popup or ModalBottomSheet animates in another Compose owner.
+    // Record the mesh background directly so glass shares the same live Compose layer.
+    val playerBackgroundBackdrop = rememberLayerBackdrop()
+    // Record foreground content independently to keep glass out of its own sample source.
+    // Window-space wrappers preserve sampling when a Popup or ModalBottomSheet animates
+    // in another Compose owner.
     val playerContentBackdrop = rememberLayerBackdrop()
     // The expanded cover is intentionally rendered above the player content. Record it in a
     // separate source so sheets can sample it without changing that visual z-order.
@@ -143,7 +121,6 @@ fun BottomSheetPlayer(
     CompositionLocalProvider(
         LocalPlayerSheet provides sheetLayers,
         LocalPlayerArtwork provides artwork,
-        LocalPlayerBackdropFrame provides backdropFrame,
         LocalPlayerBackgroundReadyChanged provides onBackgroundReadyChanged,
         LocalGlassBackdrop provides playerBackdrop,
         LocalBlurBackdrop provides playerBackdrop,

@@ -831,9 +831,8 @@ class MainActivity : ComponentActivity() {
                                     .layout { measurable, constraints ->
                                         val placeable = measurable.measure(constraints)
                                         layout(placeable.width, placeable.height) {
-                                            // SurfaceView clears a hole after Compose draws. An
-                                            // opaque player therefore does not automatically
-                                            // cull the home page's text/images/glass underneath.
+                                            // Stop drawing page text, images and glass once the
+                                            // expanded mesh background can cover them completely.
                                             if (!playerBottomSheetState.isExpanded || !playerBackgroundReady.value) {
                                                 placeable.place(0, 0)
                                             }
