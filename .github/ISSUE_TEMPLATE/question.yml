@@ -1,0 +1,61 @@
+name: 💬 使用咨询与疑问 (Question)
+description: 关于账号登录、VIP 试听限制、状态栏歌词集成或软件配置的疑问
+title: "[Question]: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        在提交咨询前，请先查看以下高频疑问是否能够解决你的问题：
+        
+        > [!NOTE]
+        > **Q1：为什么许多歌曲只能播放 20~30 秒试听？**
+        > A：受网易云音乐服务端接口限制，VIP 专属歌曲在未登录或登录非 VIP 账号时，官方仅返回试听片段。请检查是否已在「设置 → 账号」中正确填入包含有效 VIP 权益的账号 Cookie。
+        >
+        > **Q2：为什么某些歌曲提示“无法播放”或自动跳过？**
+        > A：可能由于歌曲无版权、下架或需要独立购买专辑。MeiloX 为第三方客户端，不提供或破解音乐资源。
+        >
+        > **Q3：状态栏歌词 / 词幕如何开启？**
+        > A：请确保安装了支持的词幕应用（如 [Lyricon](https://github.com/tomakino/lyricon)），并在 MeiloX 内「设置 → 歌词设置 → 歌词共享」中开启「启用歌词共享」。
+        >
+        > **Q4：如何导出调试日志？**
+        > A：进入应用内「设置 → 关于 → 日志收集」，即可查看与导出 `log-*.txt` 及崩溃日志。
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: 咨询类型
+      options:
+        - 🔐 账号与登录相关（Cookie 填写、登录失效、账号信息展示）
+        - 🎵 歌曲播放与试听疑问（20秒试听限制、版权受限、音质选择）
+        - 📝 歌词与状态栏词幕集成（Lyricon / SuperLyricApi 配置）
+        - ⚙️ 界面设置与效果调整（液态玻璃、动态背景等配置）
+        - 📦 构建安装与版本更新（Actions 构件、版本检测等）
+        - ❓ 其它疑问
+    validations:
+      required: true
+
+  - type: input
+    id: env_info
+    attributes:
+      label: 版本与运行环境（可选）
+      placeholder: 例如：MeiloX 1.55.1 / 小米 15 (HyperOS 2.0 / Android 15)
+
+  - type: textarea
+    id: content
+    attributes:
+      label: 疑问详情
+      description: 请清晰描述你的疑问或需要咨询的内容
+      placeholder: 请在此详细说明你的问题...
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 确认清单
+      options:
+        - label: 我已阅读上方常见疑问解答以及 README 中的免责声明
+          required: true
+        - label: 我已在 Issues 中搜索过相关讨论
+          required: true

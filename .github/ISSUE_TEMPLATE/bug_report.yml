@@ -1,0 +1,129 @@
+name: 🐛 缺陷反馈 (Bug Report)
+description: 提交使用过程中遇到的问题、播放异常、界面显示错误或崩溃闪退
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你为 MeiloX 反馈问题！
+        
+        > [!IMPORTANT]
+        > 1. **先搜索再提交**：请先在 [已有的 Issues](https://github.com/NEORUAA/MeiloX/issues) 中搜索，确认是否已有相同或相似问题。
+        > 2. **歌曲试听 20~30 秒或 VIP 歌曲播放失败**：MeiloX 依赖网易云官方接口，未登录或无有效黑胶 VIP 的账号无法播放完整 VIP 歌曲/高解析音质，此为账号权限限制而非软件缺陷。
+        > 3. **最新版本排查**：建议先在 [Releases](https://github.com/NEORUAA/MeiloX/releases) 或 [GitHub Actions](https://github.com/NEORUAA/MeiloX/actions) 最新构件中测试是否已修复。
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: 问题分类
+      description: 请选择遇到问题的功能模块
+      options:
+        - 🎵 播放与音频（播放报错、试听截断、自动切歌、音质切换等）
+        - 📝 歌词与共享（逐字歌词、歌词翻译、排版错位、状态栏词幕/Lyricon/SuperLyricApi）
+        - 🎨 界面与动效（液态玻璃、动态背景、毛玻璃、深浅色模式、布局错位）
+        - 📁 歌单与媒体库（歌单加载卡死、收藏/取消收藏报错、搜索、歌手/专辑）
+        - 💥 应用崩溃与闪退（冷启动闪退、切歌闪退、无响应 ANR）
+        - ⚡ 性能与发热（掉帧卡顿、内存过高、电量消耗异常）
+        - ❓ 其它问题
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: MeiloX 版本号
+      description: 可在应用内「设置 → 关于」查看版本号，或填写 GitHub Actions 构建号/链接
+      placeholder: 例如：1.55.1 / 1.54.6-34 / Actions Run #38049493568
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: 设备型号与系统版本
+      description: 请提供机型、系统 ROM 及 Android 版本（天玑/骁龙等不同 SoC 及厂商系统对渲染和后台策略有差异）
+      placeholder: 例如：小米 15 (HyperOS 2.0 / Android 15) 或 vivo X100 (OriginOS 5 / Android 15)
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 详细描述遇到的异常现象
+      placeholder: 请清晰描述在什么场景下发生了什么异常...
+    validations:
+      required: true
+
+  - type: textarea
+    id: song_info
+    attributes:
+      label: 歌曲与账号信息（若为播放、音质或歌词问题必填）
+      description: 如果是特定歌曲或账号出现问题，请务必提供详细信息，否则开发者难以排查复现
+      placeholder: |
+        - 歌曲名称与歌手：例如 Colbie Caillat - Try
+        - 歌曲分享链接或 ID：例如 https://music.163.com/song?id=...
+        - 播放音质选择：标准 / 极高 / 无损 / Hi-Res / 杜比全景声 / 超清母带
+        - 网易云账号状态：未登录 / 普通登录账号 / 有效黑胶 VIP 账号
+
+  - type: textarea
+    id: reproduction_steps
+    attributes:
+      label: 复现步骤
+      description: 请按顺序列出复现该问题的具体操作步骤
+      placeholder: |
+        1. 打开应用，进入「...」
+        2. 点击「...」
+        3. 观察到「...」
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_actual
+    attributes:
+      label: 期望行为与实际行为
+      description: 描述预期表现与实际发生的情况
+      placeholder: |
+        - 期望行为：
+        - 实际行为：
+
+  - type: textarea
+    id: settings_state
+    attributes:
+      label: 相关功能开关状态（可选）
+      description: 如果涉及界面渲染或歌词词幕，请说明以下开关状态
+      placeholder: |
+        - 液态玻璃 / 流体背景开关：开启 / 关闭
+        - 歌词共享（Lyricon / SuperLyricApi）：开启 / 关闭（若开启，词幕软件及版本：如 Lyricon v1.0.30-beta5）
+        - 媒体库默认页设置：
+
+  - type: textarea
+    id: media
+    attributes:
+      label: 截图或录屏（可选）
+      description: 界面排版错位、动效异常或报错弹窗，附带截图/录屏可以极大地提高排查效率
+      placeholder: 直接拖入图片或视频，或在此粘贴链接
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 运行日志 / 崩溃堆栈（强烈建议提供）
+      description: |
+        日志对定位问题非常关键！
+        - **导出方式**：进入应用内「设置 → 关于 → 日志收集」，找到对应日期的日志文件，点击分享或长按复制。
+        - 若发生闪退，请导出 `crash-*.log` 崩溃日志。
+        - 可直接将日志文件（`.txt` / `.log` / `.zip`）拖入此处上传附件，或粘贴关键堆栈。
+      placeholder: 粘贴关键日志内容，或直接拖入日志文件附件
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 确认清单
+      options:
+        - label: 我已在 [Issues](https://github.com/NEORUAA/MeiloX/issues) 中搜索过，确认没有相同或类似的未解决反馈
+          required: true
+        - label: 我已知晓无 VIP 账号可能受到网易云接口试听时长限制
+          required: false
+        - label: 我已尽量提供了完整的版本、机型信息与复现步骤
+          required: true

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📦 查看正式发布版本 (Releases)
+    url: https://github.com/NEORUAA/MeiloX/releases
+    about: 下载正式稳定版本或查看版本更新日志 (Release Notes)
+  - name: ⚡ 下载最新测试构建 (GitHub Actions)
+    url: https://github.com/NEORUAA/MeiloX/actions
+    about: 体验包含最新代码提交与修复的 CI 构建版本
+  - name: 📖 开源致谢与第三方声明
+    url: https://github.com/NEORUAA/MeiloX#开源致谢
+    about: 了解项目依赖的上游与开源组件（Mei、MeloX、Lyricon 等）
