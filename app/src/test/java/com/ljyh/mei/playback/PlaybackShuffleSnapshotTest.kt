@@ -1,6 +1,10 @@
 package com.ljyh.mei.playback
 
+import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.preferencesOf
 import com.google.gson.Gson
+import com.ljyh.mei.constants.RestorePlaybackPositionKey
+import com.ljyh.mei.constants.RestorePlaybackStateKey
 import com.ljyh.mei.playback.queue.PlaylistQueueSource
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -87,5 +91,41 @@ class PlaybackShuffleSnapshotTest {
         )
         assertTrue(restored.isFmMode)
         assertNull(restored.similarFmSourceIds)
+    }
+
+    @Test
+    fun restorePreferencesIndependentlyControlProgressAndStateAfterTheLatestCheckpoint() {
+        val saved = PlaybackSnapshot(
+            savedAtEpochMs = 100L,
+            items = listOf("11", "22").map { PlaybackItemSnapshot(mediaId = it) },
+            shuffleOrder = listOf(1, 0),
+            playlistSource = PlaylistQueueSource(123L, "server-alg"),
+            queueTitle = "Saved queue",
+        )
+        val latest = saved.withCheckpoint(PlaybackCheckpoint(100L, 200L, 1, 12345L, 2, true, true))
+
+        listOf(false, true).forEach { restorePosition ->
+            listOf(false, true).forEach { restoreState ->
+                val restored = latest.withRestorePreferences(preferencesOf(
+                    RestorePlaybackPositionKey to restorePosition,
+                    RestorePlaybackStateKey to restoreState,
+                ))
+                assertEquals(if (restorePosition) 12345L else 0L, restored.positionMs)
+                assertEquals(restoreState, restored.playWhenReady)
+                assertEquals(latest, restored.copy(positionMs = latest.positionMs, playWhenReady = true))
+            }
+        }
+        assertEquals(12345L, latest.positionMs)
+        assertTrue(latest.playWhenReady)
+    }
+
+    @Test
+    fun missingRestorePreferencesKeepExistingBehaviorAndNeverStartAPausedSnapshot() {
+        val playing = PlaybackSnapshot(positionMs = 7000L, playWhenReady = true)
+        assertEquals(playing, playing.withRestorePreferences(emptyPreferences()))
+        val paused = playing.copy(playWhenReady = false)
+        assertEquals(paused, paused.withRestorePreferences(emptyPreferences()))
+        assertEquals(paused, paused.withRestorePreferences(preferencesOf(RestorePlaybackStateKey to true)))
+        assertEquals(0L, paused.copy(positionMs = -1L).withRestorePreferences(emptyPreferences()).positionMs)
     }
 }

@@ -3,6 +3,7 @@ package com.ljyh.mei.playback
 import android.content.Context
 import android.net.Uri
 import android.os.Bundle
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -12,6 +13,8 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import com.google.gson.Gson
 import com.ljyh.mei.constants.PlaybackSnapshotKey
+import com.ljyh.mei.constants.RestorePlaybackPositionKey
+import com.ljyh.mei.constants.RestorePlaybackStateKey
 import com.ljyh.mei.data.model.MediaMetadata
 import com.ljyh.mei.data.model.PLACEHOLDER_URI
 import com.ljyh.mei.data.model.createPlaceholder
@@ -52,6 +55,11 @@ internal fun PlaybackSnapshot.withCheckpoint(checkpoint: PlaybackCheckpoint?): P
         playWhenReady = checkpoint.playWhenReady,
     )
 }
+
+internal fun PlaybackSnapshot.withRestorePreferences(preferences: Preferences): PlaybackSnapshot = copy(
+    positionMs = if (preferences[RestorePlaybackPositionKey] != false) positionMs.coerceAtLeast(0L) else 0L,
+    playWhenReady = playWhenReady && preferences[RestorePlaybackStateKey] != false,
+)
 
 data class PlaybackSnapshot(
     val schemaVersion: Int = 2,

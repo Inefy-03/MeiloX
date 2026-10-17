@@ -426,7 +426,8 @@ class MusicService : MediaLibraryService(),
         playbackRestoreJob = scope.launch {
             try {
                 val restoredState = withContext(Dispatchers.IO) {
-                    playbackPersistence.load()?.let { snapshot ->
+                    val preferences = context.dataStore.data.firstOrNull() ?: return@withContext null
+                    playbackPersistence.load()?.withRestorePreferences(preferences)?.let { snapshot ->
                         snapshot to playbackPersistence.restoreItems(snapshot)
                     }
                 }
@@ -452,8 +453,8 @@ class MusicService : MediaLibraryService(),
                         ?.let { player.setPlaybackOrder(it) }
                     player.shuffleModeEnabled = snapshot.shuffleModeEnabled && !snapshot.isFmMode
                     queueManager.restorePlaylistSource(snapshot.playlistSource)
-                    player.prepare()
                     player.playWhenReady = snapshot.playWhenReady
+                    player.prepare()
                     Timber.tag("MusicService").d(
                         "Restored playback snapshot -> items: ${restoredItems.size}, " +
                             "index: $restoredIndex, position: ${snapshot.positionMs}, " +
@@ -1017,7 +1018,6 @@ class MusicService : MediaLibraryService(),
                 }
                 player.seekToNext()
                 player.prepare()
-                player.play()
             } else {
                 // 列表播完了，或者没有下一首
                 player.stop()

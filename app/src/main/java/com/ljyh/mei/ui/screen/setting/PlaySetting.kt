@@ -39,6 +39,8 @@ import com.ljyh.mei.constants.MusicQuality
 import com.ljyh.mei.constants.MusicQualityKey
 import com.ljyh.mei.constants.NoAudioSourceKey
 import com.ljyh.mei.constants.PreviousPlaybackKey
+import com.ljyh.mei.constants.RestorePlaybackPositionKey
+import com.ljyh.mei.constants.RestorePlaybackStateKey
 import com.ljyh.mei.ui.glass.GlassCard
 import com.ljyh.mei.ui.glass.GlassIconButton
 import com.ljyh.mei.ui.glass.GlassSegmentedControl
@@ -66,6 +68,8 @@ fun PlaySetting(
     val (loopPlayback, onLoopPlaybackChange) = rememberPreference(LoopPlaybackKey, true)
     val (cloudShuffle, onCloudShuffleChange) = rememberPreference(CloudShuffleEnabledKey, true)
     val (previousPlayback, onPreviousPlaybackChange) = rememberPreference(PreviousPlaybackKey, true)
+    val (restorePlaybackPosition, onRestorePlaybackPositionChange) = rememberPreference(RestorePlaybackPositionKey, true)
+    val (restorePlaybackState, onRestorePlaybackStateChange) = rememberPreference(RestorePlaybackStateKey, true)
     val (noAudioSource, onNoAudioSourceChange) = rememberPreference(NoAudioSourceKey, false)
     val (autoMixEnabled, onAutoMixEnabledChange) = rememberPreference(AutoMixEnabledKey, false)
     val (autoMixMode, onAutoMixModeChange) = rememberEnumPreference(AutoMixModeKey, AutoMixMode.Smart)
@@ -102,6 +106,16 @@ fun PlaySetting(
                 )
                 ToggleRow(stringResource(R.string.skip_unavailable), "waveform.slash", noAudioSource, onNoAudioSourceChange)
                 ToggleRow(stringResource(R.string.previous_behavior), "backward.fill", previousPlayback, onPreviousPlaybackChange)
+                ToggleRow(
+                    stringResource(R.string.restore_playback_position), "arrow.counterclockwise",
+                    restorePlaybackPosition, onRestorePlaybackPositionChange,
+                    description = stringResource(R.string.restore_playback_position_description),
+                )
+                ToggleRow(
+                    stringResource(R.string.restore_playback_state), "play.fill",
+                    restorePlaybackState, onRestorePlaybackStateChange,
+                    description = stringResource(R.string.restore_playback_state_description),
+                )
                 ValueRow(stringResource(R.string.music_quality), "waveform") {
                     IosPopupButton(
                         selected = musicQuality,

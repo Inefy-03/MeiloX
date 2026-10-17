@@ -351,6 +351,10 @@
     <string name="loop_playback">Loop Playback</string>
     <string name="skip_unavailable">Skip Unavailable Tracks</string>
     <string name="previous_behavior">Previous Button Restarts After 3 Seconds</string>
+    <string name="restore_playback_position">Restore Last Playback Position</string>
+    <string name="restore_playback_position_description">When off, playback starts from the beginning after restarting the app.</string>
+    <string name="restore_playback_state">Restore Last Playback State</string>
+    <string name="restore_playback_state_description">When off, playback stays paused after restarting the app.</string>
     <string name="music_quality">Music Quality</string>
     <string name="automix">AutoMix</string>
     <string name="automix_enabled">Enable AutoMix</string>

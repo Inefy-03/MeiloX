@@ -350,6 +350,10 @@
     <string name="loop_playback">循环播放</string>
     <string name="skip_unavailable">无音频源时播放下一首</string>
     <string name="previous_behavior">播放超过 3 秒时上一首按钮从头播放</string>
+    <string name="restore_playback_position">恢复上次播放进度</string>
+    <string name="restore_playback_position_description">关闭后，下次重启应用时从头开始播放。</string>
+    <string name="restore_playback_state">恢复上次播放状态</string>
+    <string name="restore_playback_state_description">关闭后，下次重启应用时保持暂停。</string>
     <string name="music_quality">音乐质量</string>
     <string name="automix">自动混音</string>
     <string name="automix_enabled">启用自动混音</string>
