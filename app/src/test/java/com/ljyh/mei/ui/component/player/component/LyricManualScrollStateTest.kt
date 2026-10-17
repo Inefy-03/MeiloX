@@ -6,6 +6,21 @@ import org.junit.Test
 
 class LyricManualScrollStateTest {
     @Test
+    fun hidingDuringADragReopensFollowingPlaybackWithoutTheOldGracePeriod() {
+        val state = LyricManualScrollState()
+        state.onDragStarted(nowMs = 1_000)
+
+        state.onHidden()
+        state.resumeIfIdle(nowMs = 1_001, isScrollInProgress = false)
+
+        assertFalse(state.isDragging)
+        assertFalse(state.isBrowsing)
+        assertTrue(state.returnToPlaybackPending)
+        state.onPlaybackPositioned()
+        assertFalse(state.returnToPlaybackPending)
+    }
+
+    @Test
     fun initialPlaybackDoesNotBrowseOrRequestRepositioning() {
         val state = LyricManualScrollState()
 

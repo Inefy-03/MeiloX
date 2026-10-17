@@ -21,6 +21,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -42,7 +44,8 @@ fun Title(
     titleStyle: TextStyle = MaterialTheme.typography.headlineSmall,
     subTitleStyle: TextStyle = MaterialTheme.typography.titleMedium,
     needShadow: Boolean = true,
-    iconColor: Color = Color.White // 新增：控制图标颜色，方便在不同背景下调整
+    iconColor: Color = Color.White, // 新增：控制图标颜色，方便在不同背景下调整
+    onMoreButtonPositioned: (LayoutCoordinates) -> Unit = {},
 ) {
     val shadowStyle = if (needShadow) Shadow(
         color = Color.Black.copy(alpha = 0.3f),
@@ -119,6 +122,7 @@ fun Title(
                 Box(
                     modifier = Modifier
                         .requiredSize(34.dp)
+                        .onGloballyPositioned(onMoreButtonPositioned)
                         .background(Color.White.copy(alpha = 0.15f), CircleShape),
                     contentAlignment = Alignment.Center,
                 ) {

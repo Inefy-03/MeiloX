@@ -7,7 +7,6 @@ import androidx.annotation.OptIn
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -19,9 +18,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.runtime.Composable
@@ -52,17 +53,22 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInParent
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextMotion
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.media3.common.util.UnstableApi
-import com.kyant.capsule.ContinuousRoundedRectangle
 import com.ljyh.mei.R
 import com.ljyh.mei.constants.AccompanimentLyricTextBoldKey
 import com.ljyh.mei.constants.AccompanimentLyricTextSizeKey
@@ -86,6 +92,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -96,11 +103,17 @@ fun LyricScreen(
     onClick: (LyricSource) -> Unit,
     onLongClick: (LyricSource) -> Unit,
     controlsVisible: Boolean,
-    onToggleControls: (Boolean) -> Unit
+    onToggleControls: (Boolean) -> Unit,
+    active: Boolean = true,
+    sourceBadgeEndOffset: Dp = 0.dp,
+    sourceBadgeAnchor: Offset? = null,
+    sourceBadgeAnchorProgress: () -> Float = { 1f },
 ) {
     val context = LocalContext.current
+    val layoutDirection = LocalLayoutDirection.current
     val sheet = LocalPlayerSheet.current
     val expanded by remember(sheet) { derivedStateOf { sheet == null || sheet.state.isExpanded } }
+    val contentVisible by remember(sheet) { derivedStateOf { sheet == null || sheet.state.isContentVisible } }
     val (normalLyricTextSize, _) = rememberEnumPreference(
         NormalLyricTextSizeKey,
         LyricTextSize.Size28
@@ -114,9 +127,12 @@ fun LyricScreen(
     val manualScroll = remember(lyricData.lyricLine, playerConnection.player) {
         LyricManualScrollState()
     }
+    LaunchedEffect(manualScroll, active) {
+        if (!active) manualScroll.onHidden()
+    }
 
-    LifecycleStartedEffect(controlsVisible, expanded) {
-        if (controlsVisible && expanded) {
+    LifecycleStartedEffect(controlsVisible, expanded, active) {
+        if (controlsVisible && expanded && active) {
             delay(5000)
             onToggleControls(false)
         }
@@ -154,10 +170,12 @@ fun LyricScreen(
         // lower-half tap-to-toggle gesture runs on the Initial pass and consumes taps
         // before children see them, so the badge region must be excluded explicitly.
         var badgeBounds by remember { mutableStateOf<Rect?>(null) }
+        var badgeHostCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
+                .onGloballyPositioned { badgeHostCoordinates = it }
                 .pointerInput(controlsVisible, onToggleControls) {
                     val badgeSlop = 12.dp.toPx()
                     awaitEachGesture {
@@ -192,14 +210,17 @@ fun LyricScreen(
                 key(System.identityHashCode(lyricData.lyricLine)) {
                     val player = playerConnection.player
                     val lines = lyricData.lyricLine.lines
-                    // Restore from playback after measuring, not from a saved scroll offset.
-                    val listState = remember(player) { LazyListState() }
+                    // Warm the visible window near playback even before this host is shown.
+                    val initialPosition = remember(player) { player.currentPosition.coerceAtLeast(0L) }
+                    val listState = remember(player) {
+                        LazyListState(firstVisibleItemIndex = lyricFocusLineIndex(lines, initialPosition.toInt()))
+                    }
                     // Rows revealed by a within-screen jump need an existing placement
                     // to animate from. Keep a full window laid out beyond each edge.
                     val keepAliveZone = LocalConfiguration.current.screenHeightDp.dp
                     val keepAliveZonePx = with(LocalDensity.current) { keepAliveZone.roundToPx() }
                     val lyricOffsetPx = with(LocalDensity.current) { 48.dp.roundToPx() }
-                    var animatedPosition by remember(player) { mutableLongStateOf(0L) }
+                    var animatedPosition by remember(player) { mutableLongStateOf(initialPosition) }
                     var placementGeneration by remember(player) { mutableIntStateOf(0) }
                     val lyricAlpha = remember(player) { Animatable(0f) }
                     val focusLineVisible by remember(listState, lines, keepAliveZonePx) {
@@ -214,7 +235,8 @@ fun LyricScreen(
                             }
                         }
                     }
-                    LaunchedEffect(listState, manualScroll) {
+                    LaunchedEffect(listState, manualScroll, active) {
+                        if (!active) return@LaunchedEffect
                         listState.interactionSource.interactions.collect { interaction ->
                             when (interaction) {
                                 is DragInteraction.Start -> manualScroll.onDragStarted(SystemClock.elapsedRealtime())
@@ -223,9 +245,11 @@ fun LyricScreen(
                             }
                         }
                     }
-                    LifecycleStartedEffect(player, keepAliveZonePx, lyricOffsetPx, manualScroll, expanded) {
-                        if (!expanded) return@LifecycleStartedEffect
+                    LifecycleStartedEffect(player, keepAliveZonePx, lyricOffsetPx, manualScroll, contentVisible, active) {
+                        if (!contentVisible || !active) return@LifecycleStartedEffect
                         try {
+                            // A retained host must position before its old frame becomes visible.
+                            lyricAlpha.snapTo(0f)
                             // Measure the actual viewport before deciding whether entry may animate.
                             snapshotFlow { listState.layoutInfo.visibleItemsInfo.isNotEmpty() }
                                 .first { it }
@@ -269,7 +293,7 @@ fun LyricScreen(
                                         // A gesture may start during the fade. Leave it in control.
                                         if (!manualScroll.isBrowsing && !listState.isScrollInProgress) {
                                             if (snap) {
-                                                // Reset cached per-line springs while transparent.
+                                                // Reset placement springs, retaining the text measurement cache.
                                                 listState.scrollToItem(focusIndex)
                                                 animatedPosition = position
                                                 placementGeneration++
@@ -313,7 +337,7 @@ fun LyricScreen(
                             withContext(NonCancellable) { lyricAlpha.snapTo(1f) }
                         }
                     }
-                    key(placementGeneration, keepAliveZonePx) {
+                    key(keepAliveZonePx) {
                         PlayerLyricsView(
                             listState = listState,
                             isManualScrolling = manualScroll.isBrowsing && listState.isScrollInProgress,
@@ -367,6 +391,7 @@ fun LyricScreen(
                             ),
                             offset = 48.dp,
                             keepAliveZone = keepAliveZone,
+                            placementGeneration = placementGeneration,
                         )
                     }
                 }
@@ -375,7 +400,27 @@ fun LyricScreen(
                     source = lyricData.source,
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .padding( bottom = 8.dp)
+                        .padding(bottom = 8.dp)
+                        .offset {
+                            val defaultX = sourceBadgeEndOffset.roundToPx()
+                            val host = badgeHostCoordinates
+                            val anchor = sourceBadgeAnchor
+                            if (host == null || !host.isAttached || anchor == null) {
+                                IntOffset(defaultX, 0)
+                            } else {
+                                val badgeSize = 34.dp.roundToPx()
+                                val isLtr = layoutDirection == LayoutDirection.Ltr
+                                val left = if (isLtr) host.size.width - badgeSize else 0
+                                val top = host.size.height - 8.dp.roundToPx() - badgeSize
+                                val delta = anchor - host.positionInRoot() - Offset(left.toFloat(), top.toFloat())
+                                val targetX = if (isLtr) delta.x else -delta.x
+                                val progress = sourceBadgeAnchorProgress().coerceIn(0f, 1f)
+                                IntOffset(
+                                    (defaultX + (targetX - defaultX) * progress).roundToInt(),
+                                    (delta.y * progress).roundToInt(),
+                                )
+                            }
+                        }
                         .onGloballyPositioned { badgeBounds = it.boundsInParent() },
                     onClick = onClick,
                     onLongClick = onLongClick
@@ -451,14 +496,14 @@ private fun LyricSourceBadge(
 ) {
     Box(
         modifier = modifier
-            .clip(ContinuousRoundedRectangle(4.dp))
-            .background(Color.White.copy(alpha = 0.2f))
-            .border(0.5.dp, Color.White.copy(alpha = 0.1f), ContinuousRoundedRectangle(4.dp))
-            .padding(horizontal = 6.dp, vertical = 2.dp)
+            .size(34.dp)
+            .clip(CircleShape)
+            .background(Color.White.copy(alpha = 0.15f))
             .combinedClickable(
                 onClick = { onClick(source) },
                 onLongClick = { onLongClick(source) }
-            )
+            ),
+        contentAlignment = Alignment.Center,
     ) {
 
         Icon(
@@ -470,9 +515,9 @@ private fun LyricSourceBadge(
                     LyricSource.AM -> R.drawable.am
                 }
             ),
-            modifier = Modifier.size(16.dp),
+            modifier = Modifier.size(22.dp),
             contentDescription = null,
-            tint = Color.White.copy(alpha = 0.6f)
+            tint = Color.White.copy(alpha = 0.8f)
         )
     }
 }
