@@ -1,9 +1,26 @@
 package com.ljyh.mei.ui.component.player.component.mesh
 
+import android.graphics.Bitmap
 import android.graphics.Color
+import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+import com.ljyh.mei.playback.PlaybackBeatMeter
+import com.ljyh.mei.ui.component.player.LocalPlayerBackgroundReadyChanged
+import com.ljyh.mei.ui.component.player.component.FluidBackground
+import java.io.File
+import java.util.concurrent.CopyOnWriteArrayList
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -77,6 +94,80 @@ class MeshStaticFrameTest {
         assertTrue("Flow must advance after playback resumes", advanced.indices.any {
             colorDistance(advanced[it], resumed[it]) > 2
         })
+    }
+
+    @Test
+    fun fluidBackgroundPublishesReadinessAcrossAlbumChangesAndDisposal() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        fun cover(color: Int): File {
+            val file = File.createTempFile("mesh-readiness-", ".png", context.cacheDir)
+            val bitmap = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
+            try {
+                bitmap.eraseColor(color)
+                file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            } finally {
+                bitmap.recycle()
+            }
+            return file
+        }
+        val first = cover(Color.rgb(210, 80, 40))
+        val second = cover(Color.rgb(40, 80, 210))
+        val imageUrl = mutableStateOf<String?>(null)
+        val visible = mutableStateOf(true)
+        val events = CopyOnWriteArrayList<Boolean>()
+        val beatMeter = PlaybackBeatMeter()
+        fun redBlueBalance(): Double {
+            val image = compose.onNodeWithTag("fluidBackground").captureToImage()
+            val pixels = IntArray(image.width * image.height).also { image.readPixels(it) }
+            return pixels.sumOf { Color.red(it) - Color.blue(it) }.toDouble() / pixels.size
+        }
+        compose.mainClock.autoAdvance = false
+        try {
+            compose.setContent {
+                val backdrop = rememberLayerBackdrop()
+                CompositionLocalProvider(
+                    LocalPlayerBackgroundReadyChanged provides { events += it },
+                ) {
+                    if (visible.value) {
+                        FluidBackground(
+                            imageUrl = imageUrl.value,
+                            beatMeter = beatMeter,
+                            isPlaying = false,
+                            backdrop = backdrop,
+                            modifier = Modifier.size(96.dp).testTag("fluidBackground"),
+                        )
+                    }
+                }
+            }
+            compose.runOnIdle {
+                assertTrue("A background without an album must report not ready", events.isNotEmpty())
+                assertTrue("An empty background must never report ready", events.none { it })
+                imageUrl.value = first.toURI().toString()
+            }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                compose.mainClock.advanceTimeByFrame()
+                events.any { it }
+            }
+            assertTrue("The ready background must display the first cover", redBlueBalance() > 40)
+            val notReadyCount = events.count { !it }
+            compose.runOnIdle { imageUrl.value = second.toURI().toString() }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                compose.mainClock.advanceTimeBy(100)
+                redBlueBalance() < -40
+            }
+            assertEquals("Replacing an album must retain the ready background", notReadyCount,
+                events.count { !it })
+
+            compose.runOnIdle { visible.value = false }
+            compose.mainClock.advanceTimeByFrame()
+            compose.runOnIdle {
+                assertEquals("Disposal must publish not ready", false, events.last())
+                assertEquals(notReadyCount + 1, events.count { !it })
+            }
+        } finally {
+            first.delete()
+            second.delete()
+        }
     }
 
     private fun assertAlbumCrossfadeSettles(staticMode: Boolean) {

@@ -8,11 +8,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -75,7 +73,6 @@ fun FluidBackground(
     val renderer = remember { MeshGradientRenderer() }
     val meshLayer = rememberGraphicsLayer()
     val frameVersion = remember { mutableIntStateOf(0) }
-    var backgroundReady by remember { mutableStateOf(false) }
     val shouldAnimate = !meshPlaying || isPlaying
     val audioReactive = backgroundActive && expanded && isPlaying && !staticMode && sensitivity > 0f
 
@@ -103,6 +100,8 @@ fun FluidBackground(
         renderer.isPlaying = shouldAnimate
         album?.let(renderer::setAlbum)
         frameVersion.intValue++
+        // Publish readiness from the observable album effect, never from drawing.
+        onBackgroundReadyChanged(renderer.hasAlbum)
     }
 
     LifecycleStartedEffect(renderer, beatMeter, audioReactive, sensitivity) {
@@ -137,7 +136,6 @@ fun FluidBackground(
         } while (isActive && renderer.needsAnimation)
     }
 
-    LaunchedEffect(backgroundReady) { onBackgroundReadyChanged(backgroundReady) }
     DisposableEffect(Unit) {
         onDispose { onBackgroundReadyChanged(false) }
     }
@@ -160,7 +158,6 @@ fun FluidBackground(
                     frameVersion.intValue
                     if (renderer.hasAlbum) {
                         renderer.draw(this, meshLayer, renderScale)
-                        if (!backgroundReady) backgroundReady = true
                     }
                 },
         )
