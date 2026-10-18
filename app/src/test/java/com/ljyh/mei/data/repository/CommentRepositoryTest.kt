@@ -105,6 +105,35 @@ class CommentRepositoryTest {
     }
 
     @Test
+    fun incompleteSuccessfulReadsRemainRetryableErrors() = runBlocking {
+        listOf(
+            """{"code":200}""",
+            """{"code":200,"data":null}""",
+            """{"code":200,"data":{"hasMore":false}}""",
+            """{"code":200,"data":{"comments":[]}}""",
+        ).forEach { body ->
+            responseBody = body
+            assertTrue(repository.getComment("123") is Resource.Error)
+            assertTrue(repository.getFloorComment(45, "123") is Resource.Error)
+        }
+    }
+
+    @Test
+    fun validEmptyReadsAndServerErrorsKeepTheirMeaning() = runBlocking {
+        responseBody = """{"code":200,"data":{"comments":[],"hasMore":false}}"""
+        assertTrue(repository.getComment("123") is Resource.Success)
+        assertTrue(repository.getFloorComment(45, "123") is Resource.Success)
+
+        responseBody = """{"code":200,"data":{"comments":[],"hasMore":true}}"""
+        val continued = repository.getComment("123") as Resource.Success
+        assertEquals(true, continued.data.data?.hasMore)
+
+        responseBody = """{"code":403,"message":"Comments are unavailable"}"""
+        assertEquals(Resource.Error("Comments are unavailable"), repository.getComment("123"))
+        assertEquals(Resource.Error("Comments are unavailable"), repository.getFloorComment(45, "123"))
+    }
+
+    @Test
     fun composerAndAcceptedLikeStatesPreventInvalidActions() {
         assertFalse(CommentComposerState(draft = " \n ").canSend)
         assertFalse(CommentComposerState(draft = "Comment", isSending = true).canSend)

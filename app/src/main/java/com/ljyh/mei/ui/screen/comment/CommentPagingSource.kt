@@ -38,16 +38,18 @@ class CommentPagingSource(
 
             when (result) {
                 is Resource.Success -> {
-                    val data = result.data.data
+                    val data = checkNotNull(result.data.data) { "Comment data is missing" }
+                    val comments = checkNotNull(data.comments) { "Comment rows are missing" }
+                    val hasMore = checkNotNull(data.hasMore) { "Comment continuation is missing" }
                     if (pageNo == 1) onTotalReceived(data.totalCount)
                     if (sortType == CommentSortType.TIME) {
                         lastCursor = data.cursor?.takeIf(String::isNotBlank)
-                            ?: data.comments.lastOrNull()?.time?.toString() ?: lastCursor
+                            ?: comments.lastOrNull()?.time?.toString() ?: lastCursor
                     }
                     LoadResult.Page(
-                        data = data.comments,
+                        data = comments,
                         prevKey = null,
-                        nextKey = if (data.hasMore) pageNo + 1 else null
+                        nextKey = if (hasMore) pageNo + 1 else null
                     )
                 }
                 is Resource.Error -> LoadResult.Error(Exception(result.message))

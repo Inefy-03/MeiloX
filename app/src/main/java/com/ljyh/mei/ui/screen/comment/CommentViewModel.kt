@@ -220,7 +220,8 @@ class CommentViewModel @Inject constructor(
             )
             if (version != contextVersion || _expandedCommentId.value != parentCommentId) return@launch
             _floorComments.value = when (result) {
-                is Resource.Success -> Resource.Success(result.data.data.comments)
+                is Resource.Success -> result.data.data?.comments?.let { Resource.Success(it) }
+                    ?: Resource.Error("Reply rows are missing")
                 is Resource.Error -> Resource.Error(result.message)
                 Resource.Loading -> Resource.Loading
             }

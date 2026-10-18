@@ -44,6 +44,9 @@ class CommentRepository(
                     check(response.code == 200) {
                         response.message?.takeIf(String::isNotBlank) ?: "NetEase request failed (${response.code})"
                     }
+                    val data = checkNotNull(response.data) { "Comment data is missing" }
+                    checkNotNull(data.comments) { "Comment rows are missing" }
+                    checkNotNull(data.hasMore) { "Comment continuation is missing" }
                 }
             }
         }
@@ -69,6 +72,9 @@ class CommentRepository(
                     check(response.code == 200) {
                         response.message?.takeIf(String::isNotBlank) ?: "NetEase request failed (${response.code})"
                     }
+                    val data = checkNotNull(response.data) { "Reply data is missing" }
+                    checkNotNull(data.comments) { "Reply rows are missing" }
+                    checkNotNull(data.hasMore) { "Reply continuation is missing" }
                 }
             }
         }

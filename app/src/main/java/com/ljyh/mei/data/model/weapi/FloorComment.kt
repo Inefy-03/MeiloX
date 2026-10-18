@@ -6,20 +6,20 @@ data class FloorComment(
     @SerializedName("code")
     val code: Int,
     @SerializedName("data")
-    val `data`: FData,
+    val `data`: FData?,
     @SerializedName("message")
-    val message: String
+    val message: String?
 )
 
 data class FData(
     @SerializedName("bestComments")
     val bestComments: List<Any?>,
     @SerializedName("comments")
-    val comments: List<FComment>,
+    val comments: List<FComment>?,
     @SerializedName("currentComment")
     val currentComment: Any,
     @SerializedName("hasMore")
-    val hasMore: Boolean,
+    val hasMore: Boolean?,
     @SerializedName("ownerComment")
     val ownerComment: OwnerComment,
     @SerializedName("time")
