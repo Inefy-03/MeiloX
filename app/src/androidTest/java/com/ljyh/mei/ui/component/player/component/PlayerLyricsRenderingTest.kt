@@ -5,14 +5,24 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.kyant.backdrop.backdrops.emptyBackdrop
+import com.ljyh.mei.ui.component.player.FloatingLyricsPipContent
+import com.ljyh.mei.ui.glass.LocalGlassBackdrop
+import com.ljyh.mei.ui.glass.LocalGlassColors
+import com.ljyh.mei.ui.glass.defaultGlassColors
 import com.mocharealm.accompanist.lyrics.core.model.ISyncedLine
 import com.mocharealm.accompanist.lyrics.core.model.SyncedLyrics
 import com.mocharealm.accompanist.lyrics.core.model.karaoke.KaraokeAlignment
@@ -22,6 +32,7 @@ import com.mocharealm.accompanist.lyrics.core.model.synced.SyncedLine
 import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -30,6 +41,42 @@ import org.junit.runner.RunWith
 class PlayerLyricsRenderingTest {
     @get:Rule val compose = createComposeRule()
     private val clickedLine = AtomicReference<ISyncedLine>()
+
+    @Test
+    fun floatingLyricsRemainReadableWhenTheCardThemeChanges() {
+        val isDark = mutableStateOf(false)
+        val lines = listOf("Current lyric", "Translated lyric", "Next lyric")
+        compose.setContent {
+            MaterialTheme {
+                CompositionLocalProvider(
+                    LocalGlassColors provides defaultGlassColors(isDark.value),
+                    LocalGlassBackdrop provides emptyBackdrop(),
+                ) {
+                    Box(Modifier.width(320.dp).height(180.dp)) {
+                        FloatingLyricsPipContent(lines[0], lines[1], lines[2], 1f)
+                    }
+                }
+            }
+        }
+
+        fun assertReadable(dark: Boolean) {
+            val background = defaultGlassColors(dark).elevatedBackground.luminance()
+            for (line in lines) {
+                val pixels = compose.onNodeWithText(line).assertIsDisplayed().captureToImage().toPixelMap()
+                var foregroundPixels = 0
+                for (y in 0 until pixels.height) {
+                    for (x in 0 until pixels.width) {
+                        if (kotlin.math.abs(pixels[x, y].luminance() - background) > 0.15f) foregroundPixels++
+                    }
+                }
+                assertTrue("$line must contrast with its ${if (dark) "dark" else "light"} card", foregroundPixels > 20)
+            }
+        }
+
+        assertReadable(dark = false)
+        compose.runOnIdle { isDark.value = true }
+        assertReadable(dark = true)
+    }
 
     @Test
     fun wrappedKaraokeLyricsRenderAndSeekToTheirStart() {

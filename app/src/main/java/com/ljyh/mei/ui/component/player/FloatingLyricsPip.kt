@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -46,6 +45,7 @@ import com.ljyh.mei.constants.FloatingLyricsTranslationKey
 import com.ljyh.mei.playback.MusicService
 import com.ljyh.mei.playback.PlayerConnection
 import com.ljyh.mei.ui.glass.GlassCard
+import com.ljyh.mei.ui.glass.LocalGlassColors
 import com.ljyh.mei.utils.rememberPreference
 import com.mocharealm.accompanist.lyrics.core.model.ISyncedLine
 import com.mocharealm.accompanist.lyrics.core.model.karaoke.KaraokeLine
@@ -128,6 +128,22 @@ fun FloatingLyricsPipScreen(
         ?: metadata?.title
         ?: context.getString(R.string.lyrics_waiting)
 
+    FloatingLyricsPipContent(
+        title = title,
+        translation = activeLine?.translationText()?.takeIf { showsTranslation && it.isNotBlank() },
+        nextLine = nextLine?.primaryText()?.takeIf { showsNextLine && it.isNotBlank() },
+        fontScale = fontScale,
+    )
+}
+
+@Composable
+internal fun FloatingLyricsPipContent(
+    title: String,
+    translation: String?,
+    nextLine: String?,
+    fontScale: Float,
+) {
+    val colors = LocalGlassColors.current
     Box(Modifier.fillMaxSize().padding(10.dp), contentAlignment = Alignment.Center) {
         GlassCard(Modifier.fillMaxWidth()) {
             Column(
@@ -138,7 +154,7 @@ fun FloatingLyricsPipScreen(
                 AnimatedContent(title, label = "Floating lyric") { line ->
                     Text(
                         text = line,
-                        color = Color.White,
+                        color = colors.content,
                         fontSize = (18f * fontScale).sp,
                         fontWeight = FontWeight.Bold,
                         textAlign = TextAlign.Center,
@@ -146,31 +162,27 @@ fun FloatingLyricsPipScreen(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                activeLine?.translationText()
-                    ?.takeIf { showsTranslation && it.isNotBlank() }
-                    ?.let {
-                        Text(
-                            text = it,
-                            color = Color.White.copy(alpha = .74f),
-                            fontSize = (12f * fontScale).sp,
-                            textAlign = TextAlign.Center,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                nextLine?.primaryText()
-                    ?.takeIf { showsNextLine && it.isNotBlank() }
-                    ?.let {
-                        Text(
-                            text = it,
-                            color = Color.White.copy(alpha = .48f),
-                            fontSize = (11f * fontScale).sp,
-                            textAlign = TextAlign.Center,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(top = 2.dp),
-                        )
-                    }
+                translation?.let {
+                    Text(
+                        text = it,
+                        color = colors.secondaryContent,
+                        fontSize = (12f * fontScale).sp,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                nextLine?.let {
+                    Text(
+                        text = it,
+                        color = colors.secondaryContent,
+                        fontSize = (11f * fontScale).sp,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
             }
         }
     }
