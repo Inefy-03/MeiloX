@@ -71,9 +71,10 @@ import com.ljyh.mei.ui.screen.Screen
 import com.ljyh.mei.utils.dataStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
@@ -156,23 +157,21 @@ fun NeteaseWebLoginScreen(viewModel: NeteaseLoginViewModel = hiltViewModel()) {
     var webView by remember { mutableStateOf<WebView?>(null) }
     var detected by remember { mutableStateOf(false) }
     var verificationFailed by remember { mutableStateOf(false) }
-    var attemptedCookie by remember { mutableStateOf<String?>(null) }
     var showCookieLoginSheet by remember { mutableStateOf(false) }
+    val cookieLogin = remember(viewModel) { WebCookieLoginPoller() }
     val cookieManager = remember { CookieManager.getInstance() }
     val bottomPadding = LocalPlayerAwareWindowInsets.current.asPaddingValues().calculateBottomPadding()
 
-    LaunchedEffect(webView) {
-        while (webView != null && !detected) {
-            val musicU = cookieManager.getCookie("https://music.163.com").orEmpty()
-                .split(';').map(String::trim)
-                .firstOrNull { it.startsWith("MUSIC_U=") }
-                ?.substringAfter('=')?.takeIf(String::isNotBlank)
-            if (!showCookieLoginSheet && musicU != null && musicU != attemptedCookie) {
-                attemptedCookie = musicU
-                detected = viewModel.loginWithCookie(musicU)
-                verificationFailed = !detected
-            }
-            delay(500)
+    LaunchedEffect(webView, showCookieLoginSheet) {
+        if (webView != null && !detected && !showCookieLoginSheet) {
+            detected = cookieLogin.poll(
+                readMusicU = {
+                    musicUFromCookieHeader(cookieManager.getCookie("https://music.163.com").orEmpty())
+                },
+                verify = { musicU ->
+                    viewModel.loginWithCookie(musicU).also { verificationFailed = !it }
+                },
+            )
         }
     }
 
@@ -219,7 +218,10 @@ fun NeteaseWebLoginScreen(viewModel: NeteaseLoginViewModel = hiltViewModel()) {
         }
         if (!detected && !showCookieLoginSheet) {
             GlassButton(
-                onClick = { showCookieLoginSheet = true },
+                onClick = {
+                    cookieLogin.pauseForManualLogin()
+                    showCookieLoginSheet = true
+                },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(
@@ -241,10 +243,14 @@ fun NeteaseWebLoginScreen(viewModel: NeteaseLoginViewModel = hiltViewModel()) {
     }
     if (showCookieLoginSheet) {
         NeteaseCookieLoginSheet(
-            onDismiss = { showCookieLoginSheet = false },
-            onSubmit = viewModel::loginWithCookie,
+            onDismiss = {
+                cookieLogin.resumeWebLogin()
+                showCookieLoginSheet = false
+            },
+            onSubmit = { musicU -> cookieLogin.loginManually(musicU, viewModel::loginWithCookie) },
             onLoginSuccess = {
                 showCookieLoginSheet = false
+                detected = true
                 navController.finishNeteaseLogin()
             },
         )
@@ -464,7 +470,9 @@ class NeteaseLoginViewModel @Inject constructor(
         } catch (_: Exception) {
             return false
         }
+        currentCoroutineContext().ensureActive()
         context.dataStore.edit { preferences ->
+            currentCoroutineContext().ensureActive()
             preferences.setNeteaseWebSession(musicU)
             preferences[UserIdKey] = profile.id.toString()
             preferences[UserNicknameKey] = profile.nickname
