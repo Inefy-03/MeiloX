@@ -160,6 +160,18 @@
 # Compose 相关规则
 -keep,allowshrinking class * extends androidx.compose.ui.node.ModifierNodeElement { <init>(); }
 
+# Android saves Parcelable class names in Activity state across APK updates.
+-keepnames class androidx.compose.runtime.ParcelableSnapshotMutableFloatState
+-keepnames class androidx.compose.runtime.ParcelableSnapshotMutableIntState
+-keepnames class androidx.compose.runtime.ParcelableSnapshotMutableLongState
+-keepnames class androidx.compose.runtime.ParcelableSnapshotMutableState
+-keepnames class androidx.compose.runtime.snapshots.SnapshotStateList
+
+# These enums are nested in rememberSaveable MutableState via Java serialization.
+-keepnames enum com.ljyh.mei.ui.navigation.LibraryPage
+-keepnames enum com.ljyh.mei.ui.screen.main.library.LibraryPlaylistFilter
+-keepnames enum com.ljyh.mei.ui.screen.account.NeteaseMobileLoginMethod
+
 -keepattributes Signature
 -keep class com.google.gson.reflect.TypeToken { *; }
 -keep class * extends com.google.gson.reflect.TypeToken
