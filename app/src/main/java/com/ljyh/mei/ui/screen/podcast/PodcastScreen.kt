@@ -199,7 +199,8 @@ fun PodcastScreen(
                         InlineErrorState(state.subscriptionsError) { viewModel.refresh() }
                     }
                 }
-                state.subscribedPodcasts.isEmpty() -> item(key = "podcast-subscriptions-empty") {
+                state.subscribedPodcasts.isEmpty() && !state.hasMoreSubscriptions &&
+                    state.subscriptionsLoadMoreError == null -> item(key = "podcast-subscriptions-empty") {
                     PodcastSubscriptionsEmptyState(
                         title = stringResource(R.string.podcast_empty_subscriptions),
                         description = stringResource(R.string.podcast_empty_subscriptions_description),

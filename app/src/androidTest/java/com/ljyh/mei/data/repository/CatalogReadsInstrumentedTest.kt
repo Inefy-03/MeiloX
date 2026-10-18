@@ -53,4 +53,34 @@ class CatalogReadsInstrumentedTest {
         assertEquals(account, repository.accounts.first())
         assertTrue("The account credential must remain unchanged", before == context.dataStore.data.first()[CookieKey])
     }
+
+    @Test
+    fun podcastPagesUseRawOffsetsThroughTheCurrentTransport() = runBlocking {
+        val context = AppContext.instance
+        val before = context.dataStore.data.first()[CookieKey]
+        val recommendations = weapi.post("/weapi/djradio/recommend/v1")
+        assertEquals(200, recommendations.get("code").asInt)
+        val radio = checkNotNull(recommendations.getAsJsonArray("djRadios"))
+            .map { it.asJsonObject }
+            .firstOrNull { (it.get("programCount")?.asInt ?: 0) > 1 }
+        assertNotNull("Expected a public podcast with more than one episode", radio)
+        val radioId = checkNotNull(radio).get("id").asLong
+        suspend fun page(offset: Int) = weapi.post(
+            "/weapi/dj/program/byradio",
+            mapOf("radioId" to radioId, "offset" to offset, "limit" to 1, "asc" to false),
+        ).let { response ->
+            assertEquals(200, response.get("code").asInt)
+            parsePodcastProgramPage(response, offset)
+        }
+
+        val first = page(0)
+        assertTrue(first.hasMore)
+        assertEquals(1, first.fetchedCount)
+        assertEquals(1, first.programs.size)
+        val second = page(first.fetchedCount)
+        assertEquals(1, second.fetchedCount)
+        assertEquals(1, second.programs.size)
+        assertTrue(first.programs.single().id != second.programs.single().id)
+        assertTrue("The account credential must remain unchanged", before == context.dataStore.data.first()[CookieKey])
+    }
 }

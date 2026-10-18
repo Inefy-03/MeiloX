@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import com.ljyh.mei.data.model.melox.Podcast
 import com.ljyh.mei.data.model.melox.PodcastDetail
 import com.ljyh.mei.data.model.melox.PodcastHome
+import com.ljyh.mei.data.model.melox.PodcastPage
+import com.ljyh.mei.data.model.melox.PodcastProgramPage
 import com.ljyh.mei.data.repository.MeloXRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,6 +32,7 @@ data class PodcastUiState(
     val isLoadingMoreSubscriptions: Boolean = false,
     val hasMoreSubscriptions: Boolean = false,
     val subscriptionTotalCount: Int = 0,
+    val subscriptionOffset: Int = 0,
     val subscriptionsError: String? = null,
     val subscriptionsLoadMoreError: String? = null,
 )
@@ -142,21 +145,10 @@ class PodcastViewModel @Inject constructor(
                     subscriptionsLoadMoreError = null,
                 )
             }
-            val offset = if (reset) 0 else _state.value.subscribedPodcasts.size
+            val offset = if (reset) 0 else _state.value.subscriptionOffset
             runCatching { repository.subscribedPodcasts(offset = offset) }
                 .onSuccess { page ->
-                    val existing = if (reset) emptyList() else _state.value.subscribedPodcasts
-                    val merged = appendUniquePodcasts(existing, page.podcasts)
-                    _state.value = _state.value.copy(
-                        subscribedPodcasts = merged,
-                        subscriptionsLoaded = true,
-                        isSubscriptionsLoading = false,
-                        isLoadingMoreSubscriptions = false,
-                        hasMoreSubscriptions = page.hasMore && merged.size > existing.size,
-                        subscriptionTotalCount = maxOf(page.totalCount, merged.size),
-                        subscriptionsError = null,
-                        subscriptionsLoadMoreError = null,
-                    )
+                    _state.value = _state.value.withSubscriptionPage(page, reset)
                 }
                 .onFailure { error ->
                     _state.value = if (reset) {
@@ -194,19 +186,14 @@ class PodcastDetailViewModel @Inject constructor(
             check(loadedId == id)
             allProgramsCache?.let { return it }
             val version = generation
-            val detail = checkNotNull(_state.value.detail)
-            var programs = detail.programs
-            var hasMore = detail.hasMore
-            while (hasMore) {
-                val page = repository.podcastPrograms(id, offset = programs.size)
-                val merged = appendUniquePrograms(programs, page.programs)
-                check(!page.hasMore || merged.size > programs.size) { "Podcast pagination did not advance" }
-                programs = merged
-                hasMore = page.hasMore
+            var detail = checkNotNull(_state.value.detail)
+            while (detail.hasMore) {
+                val page = repository.podcastPrograms(id, offset = detail.nextOffset)
+                detail = detail.withProgramPage(page)
             }
             if (loadedId != id || generation != version) throw kotlinx.coroutines.CancellationException("Podcast changed")
-            allProgramsCache = programs
-            return programs
+            allProgramsCache = detail.programs
+            return detail.programs
         } finally { allProgramsMutex.unlock() }
     }
 
@@ -250,18 +237,13 @@ class PodcastDetailViewModel @Inject constructor(
             runCatching {
                 repository.podcastPrograms(
                     id = detail.podcast.id,
-                    offset = detail.programs.size,
+                    offset = detail.nextOffset,
                 )
             }.onSuccess { page ->
                 if (loadedId != detail.podcast.id || generation != requestGeneration) return@onSuccess
                 val latest = _state.value.detail ?: return@onSuccess
-                val programs = appendUniquePrograms(latest.programs, page.programs)
                 _state.value = _state.value.copy(
-                    detail = latest.copy(
-                        programs = programs,
-                        hasMore = page.hasMore && programs.size > latest.programs.size,
-                        totalCount = maxOf(latest.totalCount, page.totalCount, programs.size),
-                    ),
+                    detail = latest.withProgramPage(page),
                     isLoadingMore = false,
                     loadMoreError = null,
                 )
@@ -303,6 +285,33 @@ class PodcastDetailViewModel @Inject constructor(
                 }
         }
     }
+}
+
+/** Server offsets count raw rows, including entries removed by parsing or deduplication. */
+internal fun PodcastUiState.withSubscriptionPage(page: PodcastPage, reset: Boolean): PodcastUiState {
+    val existing = if (reset) emptyList() else subscribedPodcasts
+    val merged = appendUniquePodcasts(existing, page.podcasts)
+    return copy(
+        subscribedPodcasts = merged,
+        subscriptionsLoaded = true,
+        isSubscriptionsLoading = false,
+        isLoadingMoreSubscriptions = false,
+        hasMoreSubscriptions = page.hasMore,
+        subscriptionTotalCount = maxOf(page.totalCount, merged.size),
+        subscriptionOffset = (if (reset) 0 else subscriptionOffset) + page.fetchedCount,
+        subscriptionsError = null,
+        subscriptionsLoadMoreError = null,
+    )
+}
+
+internal fun PodcastDetail.withProgramPage(page: PodcastProgramPage): PodcastDetail {
+    val merged = appendUniquePrograms(programs, page.programs)
+    return copy(
+        programs = merged,
+        hasMore = page.hasMore,
+        totalCount = maxOf(totalCount, page.totalCount, merged.size),
+        nextOffset = nextOffset + page.fetchedCount,
+    )
 }
 
 internal fun appendUniquePodcasts(existing: List<Podcast>, incoming: List<Podcast>): List<Podcast> {

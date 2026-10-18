@@ -164,9 +164,10 @@ class MeloXRepository @Inject constructor(
             val programs = programsResponse.await()
             PodcastDetail(
                 podcast = podcast,
-                programs = programs.programs,
+                programs = programs.programs.distinctBy(PodcastProgram::id),
                 hasMore = programs.hasMore,
                 totalCount = programs.totalCount,
+                nextOffset = offset + programs.fetchedCount,
             )
         }
 
@@ -183,13 +184,7 @@ class MeloXRepository @Inject constructor(
             "/api/dj/program/byradio",
             mapOf("radioId" to id, "offset" to offset, "limit" to limit.coerceIn(1, 50), "asc" to false),
         )
-        val programs = response.array("programs").mapNotNull(::parseProgram)
-        val totalCount = response.int("count") ?: (offset + programs.size)
-        return PodcastProgramPage(
-            programs = programs,
-            hasMore = response.boolean("more") ?: (offset + programs.size < totalCount),
-            totalCount = totalCount,
-        )
+        return parsePodcastProgramPage(response, offset)
     }
 
     suspend fun subscribedPodcasts(offset: Int = 0, limit: Int = 50): PodcastPage {
@@ -197,15 +192,7 @@ class MeloXRepository @Inject constructor(
             "/api/djradio/get/subed",
             mapOf("offset" to offset, "limit" to limit.coerceIn(1, 100), "total" to true),
         )
-        val podcasts = response.array("djRadios").mapNotNull(::parsePodcast)
-        val totalCount = response.int("count") ?: response.int("total") ?: (offset + podcasts.size)
-        return PodcastPage(
-            podcasts = podcasts,
-            hasMore = response.boolean("hasMore")
-                ?: response.boolean("more")
-                ?: (offset + podcasts.size < totalCount),
-            totalCount = totalCount,
-        )
+        return parseSubscribedPodcastPage(response, offset)
     }
 
     suspend fun searchDiscovery(): SearchDiscovery {
@@ -1748,6 +1735,34 @@ private fun parsePodcast(element: JsonElement?): Podcast? {
         host = value.objectOrNull("dj")?.let(::parseHost),
         isSubscribed = value.boolean("subed") ?: false,
         feeType = value.int("radioFeeType"),
+    )
+}
+
+internal fun parsePodcastProgramPage(response: JsonObject, offset: Int): PodcastProgramPage {
+    val rows = response.array("programs")
+    val totalCount = response.int("count") ?: (offset + rows.size)
+    val hasMore = response.boolean("more") ?: (offset + rows.size < totalCount)
+    check(!hasMore || rows.isNotEmpty()) { "Podcast pagination did not advance" }
+    return PodcastProgramPage(
+        programs = rows.mapNotNull(::parseProgram),
+        hasMore = hasMore,
+        totalCount = totalCount,
+        fetchedCount = rows.size,
+    )
+}
+
+internal fun parseSubscribedPodcastPage(response: JsonObject, offset: Int): PodcastPage {
+    val rows = response.array("djRadios")
+    val totalCount = response.int("count") ?: response.int("total") ?: (offset + rows.size)
+    val hasMore = response.boolean("hasMore")
+        ?: response.boolean("more")
+        ?: (offset + rows.size < totalCount)
+    check(!hasMore || rows.isNotEmpty()) { "Podcast pagination did not advance" }
+    return PodcastPage(
+        podcasts = rows.mapNotNull(::parsePodcast),
+        hasMore = hasMore,
+        totalCount = totalCount,
+        fetchedCount = rows.size,
     )
 }
 
