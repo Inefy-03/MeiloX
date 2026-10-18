@@ -92,6 +92,42 @@ class DownloadLifecycleInstrumentedTest {
         }
     }
 
+    @Test fun sameNameDownloadsOwnDifferentFilesAndNeverAdoptExistingAudio() = runBlocking {
+        val directory = File(context.cacheDir, "download-identity-fixture").apply { mkdirs() }
+        val first = createDownloadTempFile(directory, "first", "wav")
+        val second = createDownloadTempFile(directory, "second", "wav")
+        val path = "Music/MeiloX-test-fixtures/${UUID.randomUUID()}"
+        val name = "Same title - Same artist.wav"
+        val resolver = context.contentResolver
+        val uris = mutableListOf<android.net.Uri>()
+        try {
+            assertNotEquals(first.absolutePath, second.absolutePath)
+            val seed = checkNotNull(resolver.insert(android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.Audio.Media.DISPLAY_NAME, name)
+                    put(android.provider.MediaStore.Audio.Media.RELATIVE_PATH, "$path/")
+                    put(android.provider.MediaStore.Audio.Media.MIME_TYPE, "audio/wav")
+                })).also(uris::add)
+            val original = ByteArray(256) { 11 }
+            resolver.openOutputStream(seed)!!.use { it.write(original) }
+            first.writeBytes(ByteArray(512) { 22 })
+            second.writeBytes(ByteArray(1024) { 33 })
+            val a = checkNotNull(publishDownloadedAudio(context, first, name, "wav", path)).also(uris::add)
+            val b = checkNotNull(publishDownloadedAudio(context, second, name, "wav", path)).also(uris::add)
+            assertEquals(3, uris.distinct().size)
+            fun bytes(uri: android.net.Uri) = resolver.openInputStream(uri)!!.use { it.readBytes() }
+            assertArrayEquals(original, bytes(seed))
+            assertArrayEquals(first.readBytes(), bytes(a))
+            assertArrayEquals(second.readBytes(), bytes(b))
+            resolver.delete(a, null, null); uris.remove(a)
+            assertArrayEquals(original, bytes(seed))
+            assertArrayEquals(second.readBytes(), bytes(b))
+        } finally {
+            uris.forEach { resolver.delete(it, null, null) }
+            first.delete(); second.delete(); directory.delete()
+        }
+    }
+
     private class StalledAudio : AutoCloseable {
         private val listener = ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1"))
         private var socket: Socket? = null

@@ -3,7 +3,6 @@ package com.ljyh.mei.playback
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
@@ -221,14 +220,13 @@ class DownloadWorker(
             return@coroutineScope
         }
         val fileName = "${specialReplace("${task.songTitle} - ${task.songArtist}")}.$suffix"
-        val tempFile = File(tempDir, fileName)
-        // Only the owning task may attach a completed file to the song database.
-        val existingMedia = findMediaStoreAudio(applicationContext, fileName, relativePath)
-        if (existingMedia != null) {
-            if (saveDownloadedSong(db, songId, task, existingMedia.uri,
-                    existingMedia.durationMs ?: existingSong?.duration ?: 0L, relativePath)) {
-                completedCount.incrementAndGet()
-            }
+        val tempFile = try {
+            createDownloadTempFile(tempDir, id.toString(), suffix)
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (error: Exception) {
+            Timber.e(error, "Could not create download temporary file")
+            updateTask(db, songId, DownloadStatus.FAILED, 0)
+            failedCount.incrementAndGet()
             return@coroutineScope
         }
         var published: Uri? = null
@@ -250,7 +248,7 @@ class DownloadWorker(
             currentCoroutineContext().ensureActive()
             val duration = runCatching { AudioFileIO.read(tempFile).audioHeader.trackLength.toLong() * 1_000L }
                 .getOrDefault(0L)
-            published = insertToMediaStore(applicationContext, tempFile, fileName, suffix, relativePath)
+            published = publishDownloadedAudio(applicationContext, tempFile, fileName, suffix, relativePath)
             val uri = checkNotNull(published) { "Could not publish downloaded audio" }
             if (saveDownloadedSong(db, songId, task, uri, duration, relativePath)) {
                 published = null
@@ -306,107 +304,6 @@ class DownloadWorker(
         true
     }
 
-    private suspend fun insertToMediaStore(
-        context: Context,
-        srcFile: File,
-        displayName: String,
-        fileType: String,
-        relativePath: String
-    ): Uri? {
-        findMediaStoreAudio(context, displayName, relativePath)?.let { return it.uri }
-
-        val mimeType = when (fileType.lowercase()) {
-            "flac" -> "audio/flac"
-            "aac" -> "audio/aac"
-            "ogg" -> "audio/ogg"
-            "wav" -> "audio/wav"
-            "m4a" -> "audio/mp4"
-            "opus" -> "audio/opus"
-            else -> "audio/mpeg"
-        }
-        val contentValues = ContentValues().apply {
-            put(MediaStore.Audio.Media.DISPLAY_NAME, displayName)
-            put(MediaStore.Audio.Media.RELATIVE_PATH, "$relativePath/")
-            put(MediaStore.Audio.Media.MIME_TYPE, mimeType)
-            put(MediaStore.Audio.Media.IS_PENDING, 1)
-        }
-        val uri = context.contentResolver.insert(
-            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, contentValues
-        ) ?: return null
-
-        try {
-            checkNotNull(context.contentResolver.openOutputStream(uri)).use { os ->
-                srcFile.inputStream().use { input ->
-                    val buffer = ByteArray(64 * 1024)
-                    while (true) {
-                        currentCoroutineContext().ensureActive()
-                        val size = input.read(buffer)
-                        if (size < 0) break
-                        os.write(buffer, 0, size)
-                    }
-                }
-            }
-            contentValues.clear()
-            contentValues.put(MediaStore.Audio.Media.IS_PENDING, 0)
-            context.contentResolver.update(uri, contentValues, null, null)
-            return uri
-        } catch (cancelled: CancellationException) {
-            context.contentResolver.delete(uri, null, null)
-            throw cancelled
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to write to MediaStore")
-            context.contentResolver.delete(uri, null, null)
-            return null
-        }
-    }
-
-    private fun findMediaStoreAudio(
-        context: Context,
-        displayName: String,
-        relativePath: String
-    ): MediaStoreAudio? {
-        val collection = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-        val projection = arrayOf(
-            MediaStore.Audio.Media._ID,
-            MediaStore.Audio.Media.DURATION,
-            MediaStore.Audio.Media.SIZE
-        )
-        val selection =
-            "${MediaStore.Audio.Media.DISPLAY_NAME} = ? AND ${MediaStore.Audio.Media.RELATIVE_PATH} = ?"
-        val selectionArgs = arrayOf(displayName, "$relativePath/")
-        return context.contentResolver.query(
-            collection,
-            projection,
-            selection,
-            selectionArgs,
-            "${MediaStore.Audio.Media.DATE_ADDED} DESC"
-        )?.use { cursor ->
-            val idIndex = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
-            val durationIndex = cursor.getColumnIndex(MediaStore.Audio.Media.DURATION)
-            val sizeIndex = cursor.getColumnIndex(MediaStore.Audio.Media.SIZE)
-            while (cursor.moveToNext()) {
-                val size = if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) {
-                    cursor.getLong(sizeIndex)
-                } else 0L
-                if (size <= 0L) continue
-                val id = cursor.getLong(idIndex)
-                val duration = if (durationIndex >= 0 && !cursor.isNull(durationIndex)) {
-                    cursor.getLong(durationIndex)
-                } else null
-                return@use MediaStoreAudio(
-                    uri = ContentUris.withAppendedId(collection, id),
-                    durationMs = duration
-                )
-            }
-            null
-        }
-    }
-
-    private data class MediaStoreAudio(
-        val uri: Uri,
-        val durationMs: Long?
-    )
-
     private suspend fun updateTask(
         db: AppDatabase,
         songId: String,
@@ -447,6 +344,65 @@ class DownloadWorker(
         }
     }
 }
+
+internal fun createDownloadTempFile(directory: File, requestId: String, suffix: String): File =
+    File.createTempFile("audio-$requestId-", ".$suffix", directory)
+
+internal suspend fun publishDownloadedAudio(
+    context: Context,
+    srcFile: File,
+    displayName: String,
+    fileType: String,
+    relativePath: String
+): Uri? {
+    val mimeType = when (fileType.lowercase()) {
+        "flac" -> "audio/flac"
+        "aac" -> "audio/aac"
+        "ogg" -> "audio/ogg"
+        "wav" -> "audio/wav"
+        "m4a" -> "audio/mp4"
+        "opus" -> "audio/opus"
+        else -> "audio/mpeg"
+    }
+    val contentValues = ContentValues().apply {
+        put(MediaStore.Audio.Media.DISPLAY_NAME, displayName)
+        put(MediaStore.Audio.Media.RELATIVE_PATH, "$relativePath/")
+        put(MediaStore.Audio.Media.MIME_TYPE, mimeType)
+        put(MediaStore.Audio.Media.IS_PENDING, 1)
+    }
+    val uri = context.contentResolver.insert(
+        MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, contentValues
+    ) ?: return null
+
+    try {
+        checkNotNull(context.contentResolver.openOutputStream(uri)).use { os ->
+            srcFile.inputStream().use { input ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    currentCoroutineContext().ensureActive()
+                    val size = input.read(buffer)
+                    if (size < 0) break
+                    os.write(buffer, 0, size)
+                }
+            }
+        }
+        contentValues.clear()
+        contentValues.put(MediaStore.Audio.Media.IS_PENDING, 0)
+        currentCoroutineContext().ensureActive()
+        check(context.contentResolver.update(uri, contentValues, null, null) == 1) {
+            "Downloaded audio publication was rejected"
+        }
+        return uri
+    } catch (cancelled: CancellationException) {
+        context.contentResolver.delete(uri, null, null)
+        throw cancelled
+    } catch (e: Exception) {
+        Timber.e(e, "Failed to write to MediaStore")
+        context.contentResolver.delete(uri, null, null)
+        return null
+    }
+}
+
 
 private val activeDownloadStates = setOf(DownloadStatus.PENDING, DownloadStatus.DOWNLOADING)
 
