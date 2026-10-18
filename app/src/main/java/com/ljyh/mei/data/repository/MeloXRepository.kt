@@ -2,10 +2,8 @@ package com.ljyh.mei.data.repository
 
 import android.app.Activity
 import android.content.Context
-import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
-import android.provider.OpenableColumns
 import android.provider.Settings
 import android.util.Log
 import androidx.datastore.preferences.core.edit
@@ -74,6 +72,9 @@ import com.ljyh.mei.data.network.readNeteaseLoginCookies
 import com.ljyh.mei.data.network.NeteaseSessionType
 import com.ljyh.mei.data.network.neteaseSessionType
 import com.ljyh.mei.data.network.requireNeteaseMobileSession
+import com.ljyh.mei.data.network.NETEASE_EXPECTED_SESSION_HEADER
+import com.ljyh.mei.data.network.neteaseSessionFingerprint
+import com.ljyh.mei.data.network.requireExpectedNeteaseSession
 import com.ljyh.mei.constants.NeteaseSessionTypeKey
 import com.ljyh.mei.di.NETEASE_WEB_SESSION_HEADER
 import com.ljyh.mei.data.network.NeteaseOfficialDeviceId
@@ -90,6 +91,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -98,7 +101,6 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.ResponseBody
 import okio.BufferedSink
-import okio.source
 import org.json.JSONObject
 import timber.log.Timber
 import java.security.MessageDigest
@@ -781,7 +783,22 @@ class MeloXRepository @Inject constructor(
     }
 
     suspend fun uploadCloudSong(uri: Uri, onProgress: (Long, Long) -> Unit = { _, _ -> }) {
-        val file = prepareCloudUploadFile(uri)
+        val credential = context.dataStore.data.first()[CookieKey]
+        check(!credential.isNullOrBlank()) { "NetEase account is not signed in" }
+        val expectedSession = neteaseSessionFingerprint(credential)
+        val file = prepareCloudUploadFile(context, uri)
+        try {
+            uploadCloudSong(file, expectedSession, onProgress)
+        } finally {
+            file.close()
+        }
+    }
+
+    private suspend fun uploadCloudSong(
+        file: CloudUploadFile,
+        expectedSession: String,
+        onProgress: (Long, Long) -> Unit,
+    ) {
         val bitrate = 999_000
         val check = requestEapi(
             "/api/cloud/upload/check",
@@ -789,6 +806,7 @@ class MeloXRepository @Inject constructor(
                 "bitrate" to bitrate.toString(), "ext" to "", "length" to file.size,
                 "md5" to file.md5, "songId" to "0", "version" to 1,
             ),
+            expectedSession = expectedSession,
         )
         val metadataToken = requestEapi(
             "/api/nos/token/alloc",
@@ -796,6 +814,7 @@ class MeloXRepository @Inject constructor(
                 "bucket" to "", "ext" to file.extension, "filename" to file.normalizedStem,
                 "local" to false, "nos_product" to 3, "type" to "audio", "md5" to file.md5,
             ),
+            expectedSession = expectedSession,
         ).objectOrNull("result") ?: error("NetEase did not return a cloud resource token")
 
         if (check.boolean("needUpload") == true) {
@@ -804,8 +823,9 @@ class MeloXRepository @Inject constructor(
                 "bucket" to bucket, "ext" to file.extension, "filename" to file.normalizedStem,
                 "local" to false, "nos_product" to 3, "type" to "audio", "md5" to file.md5,
             )
-            val uploadToken = request("/api/nos/token/alloc", tokenData).objectOrNull("result")
+            val uploadToken = request("/api/nos/token/alloc", tokenData, expectedSession).objectOrNull("result")
                 ?: error("NetEase did not return a NOS upload token")
+            requireCloudUploadSession(expectedSession)
             uploadToNos(
                 file = file,
                 bucket = bucket,
@@ -813,6 +833,7 @@ class MeloXRepository @Inject constructor(
                 token = uploadToken.string("token") ?: error("NOS token is missing"),
                 onProgress = onProgress,
             )
+            requireCloudUploadSession(expectedSession)
         }
 
         val info = requestEapi(
@@ -827,56 +848,14 @@ class MeloXRepository @Inject constructor(
                 "bitrate" to bitrate.toString(),
                 "resourceId" to (metadataToken.string("resourceId") ?: error("Cloud resource ID is missing")),
             ),
+            expectedSession = expectedSession,
         )
-        requestEapi("/api/cloud/pub/v2", mapOf("songid" to (info.long("songId") ?: 0)))
+        requestEapi(
+            "/api/cloud/pub/v2",
+            mapOf("songid" to (info.long("songId") ?: 0)),
+            expectedSession = expectedSession,
+        )
         onProgress(file.size, file.size)
-    }
-
-    private suspend fun prepareCloudUploadFile(uri: Uri): CloudUploadFile = withContext(Dispatchers.IO) {
-        val resolver = context.contentResolver
-        var filename: String? = null
-        var size = -1L
-        resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { cursor ->
-            if (cursor.moveToFirst()) {
-                cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME).takeIf { it >= 0 }?.let { filename = cursor.getString(it) }
-                cursor.getColumnIndex(OpenableColumns.SIZE).takeIf { it >= 0 }?.let { size = cursor.getLong(it) }
-            }
-        }
-        val safeFilename = filename?.takeIf(String::isNotBlank) ?: uri.lastPathSegment?.substringAfterLast('/') ?: "music.mp3"
-        if (size <= 0) size = resolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: -1
-        check(size > 0) { "The selected audio file is empty or unavailable" }
-        val digest = MessageDigest.getInstance("MD5")
-        resolver.openInputStream(uri)?.use { input ->
-            val buffer = ByteArray(1_048_576)
-            while (true) {
-                val read = input.read(buffer)
-                if (read < 0) break
-                if (read > 0) digest.update(buffer, 0, read)
-            }
-        } ?: error("The selected audio file cannot be opened")
-        val fallbackName = safeFilename.substringBeforeLast('.', safeFilename)
-        val retriever = MediaMetadataRetriever()
-        val metadata = runCatching {
-            retriever.setDataSource(context, uri)
-            Triple(
-                retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE),
-                retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST),
-                retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM),
-            )
-        }.getOrNull()
-        retriever.release()
-        CloudUploadFile(
-            uri = uri,
-            filename = safeFilename,
-            extension = safeFilename.substringAfterLast('.', "mp3").lowercase(),
-            normalizedStem = fallbackName.filterNot(Char::isWhitespace).replace('.', '_').ifEmpty { "music" },
-            size = size,
-            md5 = digest.digest().joinToString("") { "%02x".format(it) },
-            songName = metadata?.first?.takeIf(String::isNotBlank) ?: fallbackName,
-            artist = metadata?.second?.takeIf(String::isNotBlank) ?: "Unknown artist",
-            album = metadata?.third?.takeIf(String::isNotBlank) ?: "Unknown album",
-            mimeType = resolver.getType(uri) ?: "audio/mpeg",
-        )
     }
 
     private suspend fun uploadToNos(
@@ -886,13 +865,13 @@ class MeloXRepository @Inject constructor(
         token: String,
         onProgress: (Long, Long) -> Unit,
     ) = withContext(Dispatchers.IO) {
+        val operation = currentCoroutineContext()
+        operation.ensureActive()
         val lbsRequest = Request.Builder()
             .url("https://wanproxy.127.net/lbs?version=1.0&bucketname=$bucket")
             .get()
             .build()
-        val uploadHost = cloudUploadClient.newCall(lbsRequest).execute().use { response ->
-            check(response.isSuccessful) { "NOS server lookup failed (${response.code})" }
-            val body = response.body.string()
+        val uploadHost = executeCloudUploadRequest(cloudUploadClient, lbsRequest).let { body ->
             JsonParser.parseString(body).asJsonObject.getAsJsonArray("upload")?.firstOrNull()?.asString
                 ?: error("NetEase did not return an available upload server")
         }
@@ -902,17 +881,23 @@ class MeloXRepository @Inject constructor(
             override fun contentType() = file.mimeType.toMediaTypeOrNull()
             override fun contentLength() = file.size
             override fun writeTo(sink: BufferedSink) {
-                context.contentResolver.openInputStream(file.uri)?.use { input ->
-                    val source = input.source()
+                file.file.inputStream().use { input ->
+                    val buffer = ByteArray(64 * 1024)
                     var sent = 0L
                     while (true) {
-                        val read = source.read(sink.buffer, 64 * 1024L)
+                        operation.ensureActive()
+                        val read = input.read(buffer)
                         if (read < 0) break
                         sent += read
+                        check(sent <= file.size) { "Cloud upload snapshot changed" }
+                        sink.write(buffer, 0, read)
                         sink.flush()
-                        onProgress(sent, file.size)
+                        operation.ensureActive()
+                        // Publication is a separate request after the binary transfer.
+                        onProgress(sent.coerceAtMost(file.size - maxOf(1L, file.size / 100L)), file.size)
                     }
-                } ?: error("The selected audio file cannot be reopened")
+                    check(sent == file.size) { "Cloud upload snapshot changed" }
+                }
             }
         }
         val request = Request.Builder()
@@ -921,11 +906,15 @@ class MeloXRepository @Inject constructor(
             .header("Content-MD5", file.md5)
             .post(body)
             .build()
-        cloudUploadClient.newCall(request).execute().use { response ->
-            check(response.isSuccessful) {
-                response.body.string().takeIf(String::isNotBlank) ?: "NOS upload failed (${response.code})"
-            }
+        val receipt = JsonParser.parseString(executeCloudUploadRequest(cloudUploadClient, request)).asJsonObject
+        check(receipt.long("offset") == file.size) {
+            "NOS did not acknowledge the complete file"
         }
+    }
+
+    private suspend fun requireCloudUploadSession(expectedSession: String) {
+        currentCoroutineContext().ensureActive()
+        context.dataStore.data.first().requireExpectedNeteaseSession(expectedSession)
     }
 
     suspend fun privateConversations(offset: Int = 0, limit: Int = 50): List<PrivateConversation> =
@@ -1257,16 +1246,37 @@ class MeloXRepository @Inject constructor(
         requestEapi("/api/listen/together/end/v2", mapOf("roomId" to roomId))
     }
 
-    private suspend fun request(path: String, body: Map<String, Any> = emptyMap()): JsonObject =
+    private suspend fun request(
+        path: String,
+        body: Map<String, Any> = emptyMap(),
+        expectedSession: String? = null,
+    ): JsonObject =
         try {
-            validate(weapi.post(path.replaceFirst("/api/", "/weapi/"), body))
+            if (expectedSession != null) requireCloudUploadSession(expectedSession)
+            val response = weapi.post(
+                path.replaceFirst("/api/", "/weapi/"), body,
+                headers = expectedSession?.let { mapOf(NETEASE_EXPECTED_SESSION_HEADER to it) }.orEmpty(),
+            )
+            if (expectedSession != null) requireCloudUploadSession(expectedSession)
+            validate(response)
         } catch (error: Exception) {
             if (error is kotlinx.coroutines.CancellationException) throw error
-            requestEapi(path, body)
+            requestEapi(path, body, expectedSession)
         }
 
-    private suspend fun requestEapi(path: String, body: Map<String, Any> = emptyMap()): JsonObject =
-        validate(eapi.post(path.replaceFirst("/api/", "/eapi/"), body))
+    private suspend fun requestEapi(
+        path: String,
+        body: Map<String, Any> = emptyMap(),
+        expectedSession: String? = null,
+    ): JsonObject {
+        if (expectedSession != null) requireCloudUploadSession(expectedSession)
+        val response = eapi.post(
+            path.replaceFirst("/api/", "/eapi/"), body,
+            headers = expectedSession?.let { mapOf(NETEASE_EXPECTED_SESSION_HEADER to it) }.orEmpty(),
+        )
+        if (expectedSession != null) requireCloudUploadSession(expectedSession)
+        return validate(response)
+    }
 
     private fun validate(response: JsonObject): JsonObject {
         val code = response.int("code") ?: 200
@@ -1613,19 +1623,6 @@ private val PLAYBACK_QUERY_SENSITIVE_PATTERN = Regex(
         "check[_-]?token|x-anticheattoken|token|password|passwd|secret)=)[^&\\s]+",
 )
 private val PLAYBACK_URL_CREDENTIAL_PATTERN = Regex("(?i)(https?://)[^/@\\s:]+:[^/@\\s]+@")
-
-private data class CloudUploadFile(
-    val uri: Uri,
-    val filename: String,
-    val extension: String,
-    val normalizedStem: String,
-    val size: Long,
-    val md5: String,
-    val songName: String,
-    val artist: String,
-    val album: String,
-    val mimeType: String,
-)
 
 private fun JsonElement.identifierLong(): Long? = runCatching {
     when {
