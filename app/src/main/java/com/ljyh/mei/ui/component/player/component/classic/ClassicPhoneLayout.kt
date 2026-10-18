@@ -136,6 +136,8 @@ fun ClassicPhoneLayout(
                 1 -> {
                     LyricScreen(
                         lyricData = lyricLine,
+                        // Account for the pager inset while matching the progress track.
+                        sourceBadgeEndOffset = PlayerHorizontalPadding - 8.dp,
                         playerConnection = stateContainer.playerConnection,
                         modifier = Modifier
                             .fillMaxSize()

@@ -173,10 +173,15 @@ private fun MiniPlayerContent(
         shape = Capsule(),
         onVisualBoundsChanged = { bounds, light -> sheet?.updateMiniPressHighlight(bounds, light) },
         cancelPressFeedback = sheetTransitioning,
+        pressHighlight = remember(sheet) { { sheet?.collapsedPressHighlight } },
         morphProgress = compactProgress,
         morphVerticalTravel = NavigationBarHeight - 16.dp,
         style = GlassSurfaceStyle.Navigation,
-        onClick = onClick,
+        onClick = {
+            sheet?.prepareTransition()
+            sheet?.releasePressHighlight()
+            onClick()
+        },
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -190,7 +195,9 @@ private fun MiniPlayerContent(
                 }
                 .then(
                     if (sheet != null) {
-                        Modifier.recordPlayerContent(sheet, sheet.miniContent) { true }
+                        Modifier.recordPlayerContent(sheet, sheet.miniContent, warmWhileVisible = true) {
+                            !sheet.isTransitioning
+                        }
                     } else Modifier,
                 ),
         ) {
@@ -299,7 +306,7 @@ fun MiniMediaInfo(
                         }
                         onCoverBoundsChanged?.invoke(bounds)
                     }
-                    .drawWithContent { if (sheet?.drawsArtworkOverlay != true) drawContent() }
+                    .drawWithContent { if (sheet?.sharesArtwork != true) drawContent() }
                     .clip(ContinuousRoundedRectangle(ThumbnailCornerRadius)),
             ) { cover ->
                 if (cover != null) Image(

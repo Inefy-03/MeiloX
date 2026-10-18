@@ -13,6 +13,31 @@ class PlayerSheetMotionTest {
     private val mini = Rect(12f, 700f, 388f, 748f)
     private val page = Rect(0f, 0f, 400f, 800f)
 
+    @Test fun lyricHeaderArtworkKeepsExactEndpointsAndShrinksItsTopInsetOnCollapse() {
+        val source = Rect(20f, 708f, 52f, 740f)
+        val header = Rect(24f, 76f, 70f, 122f)
+        assertEquals(source, playerTopAnchoredArtworkRect(source, header, mini, page, 0f))
+        assertEquals(header, playerTopAnchoredArtworkRect(source, header, mini, page, 1f))
+        var previous = Float.POSITIVE_INFINITY
+        for (step in 100 downTo 0) {
+            val progress = step / 100f
+            val artwork = playerTopAnchoredArtworkRect(source, header, mini, page, progress)
+            val container = playerContainerRect(mini, page, progress)
+            val inset = artwork.top - container.top
+            assertTrue(inset <= previous + 0.001f)
+            assertTrue(inset >= 8f - 0.001f && inset <= 76f + 0.001f)
+            previous = inset
+        }
+    }
+
+    @Test fun lyricHeaderTopInsetReversesWithoutASecondTrajectory() {
+        val source = Rect(20f, 708f, 52f, 740f)
+        val header = Rect(24f, 76f, 70f, 122f)
+        val opening = (0..100).map { playerTopAnchoredArtworkRect(source, header, mini, page, it / 100f) }
+        val closing = (100 downTo 0).map { playerTopAnchoredArtworkRect(source, header, mini, page, it / 100f) }
+        assertEquals(opening, closing.reversed())
+    }
+
     @Test fun pressedArtworkKeepsItsActualOriginAndReachesSquareTarget() {
         val pressed = Rect(3f, 707f, 36f, 743f)
         val target = Rect(50f, 100f, 350f, 400f)
@@ -45,10 +70,12 @@ class PlayerSheetMotionTest {
         assertEquals(1f, release.fraction(0f), 0f)
     }
 
-    @Test fun pressLightFadesBeforeMiniContent() {
+    @Test fun pressLightFadesAtTheNativeBackgroundHandoff() {
         assertEquals(1f, playerPressHighlightAlpha(0f), 0f)
         assertTrue(playerPressHighlightAlpha(0.09f) > 0f)
-        assertEquals(0f, playerPressHighlightAlpha(0.1f), 0f)
+        assertTrue(playerPressHighlightAlpha(0.1f) > 0f)
+        assertTrue(playerPressHighlightAlpha(0.8f) > 0f)
+        assertEquals(0f, playerPressHighlightAlpha(PlayerBackgroundHandoffEnd), 0f)
         assertTrue(playerMiniContentAlpha(0.1f) > 0f)
         assertTrue(playerMiniContentAlpha(0.7f) > 0f)
         assertEquals(0f, playerMiniContentAlpha(0.8f), 0f)
@@ -160,6 +187,42 @@ class PlayerSheetMotionTest {
             state.cancelDrag()
             assertEquals(expandedAnchor, state.targetAnchor)
             assertFalse(state.isDragging)
+        } finally { state.dispose() }
+    }
+
+    @Test fun contentVisibilityDoesNotRestartAtExpandedDragBoundaries() = runBlocking {
+        val clock = BroadcastFrameClock()
+        val state = BottomSheetState(CoroutineScope(coroutineContext + clock), 1f, {}, 0.dp, 100.dp,
+            800.dp, 800.dp, expandedAnchor)
+        try {
+            assertTrue(state.isContentVisible)
+            state.beginDrag()
+            assertFalse(state.isExpanded)
+            assertTrue(state.isContentVisible)
+            state.dispatchRawDelta(200f)
+            assertTrue(state.isContentVisible)
+            state.dispatchRawDelta(-200f)
+            assertTrue(state.isContentVisible)
+            state.cancelDrag()
+            assertTrue(state.isExpanded)
+            assertTrue(state.isContentVisible)
+        } finally { state.dispose() }
+    }
+
+    @Test fun contentUpdatesStartOnOpeningAndStopOnlyAfterCollapseSettles() = runBlocking {
+        val clock = BroadcastFrameClock()
+        val state = BottomSheetState(CoroutineScope(coroutineContext + clock), 1f, {}, 0.dp, 100.dp,
+            800.dp, 100.dp, collapsedAnchor)
+        try {
+            assertFalse(state.isContentVisible)
+            state.beginDrag()
+            assertTrue(state.isContentVisible)
+            state.dispatchRawDelta(-200f)
+            state.cancelDrag()
+            assertTrue(state.isContentVisible)
+            repeat(180) { yield(); clock.sendFrame(it * 16_666_667L); yield() }
+            assertTrue(state.isCollapsed)
+            assertFalse(state.isContentVisible)
         } finally { state.dispose() }
     }
 

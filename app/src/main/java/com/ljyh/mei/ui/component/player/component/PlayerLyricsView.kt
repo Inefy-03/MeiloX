@@ -125,7 +125,8 @@ internal fun PlayerLyricsView(
     offset: Dp = 32.dp,
     keepAliveZone: Dp = 100.dp,
     blurDelta: Float = 3f,
-    showDebugRectangles: Boolean = false
+    showDebugRectangles: Boolean = false,
+    placementGeneration: Int = 0,
 ) {
     val stableNormalTextStyle = remember(normalLineTextStyle) { normalLineTextStyle }
     val stableAccompanimentTextStyle =
@@ -371,7 +372,8 @@ internal fun PlayerLyricsView(
                                 .fillMaxWidth()
                                 .springPlacement(
                                     this@LookaheadScope,
-                                    "${line.start}-${line.end}-$index",
+                                    // A new key resets this node's spring without recreating the renderer.
+                                    "${line.start}-${line.end}-$index-$placementGeneration",
                                     isManualScrolling,
                                     stiffness = dynamicStiffness
                                 ),

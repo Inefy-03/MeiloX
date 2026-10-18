@@ -3,12 +3,14 @@ package com.ljyh.mei.ui.component.sheet
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntSize
 
 internal const val PlayerSheetStiffness = 300f
 internal const val PlayerBackgroundHandoffEnd = 0.99f
 internal const val PlayerMiniContentFadeEnd = 0.8f
-internal const val PlayerPressHighlightFadeEnd = 0.1f
+internal const val PlayerPressHighlightFadeEnd = PlayerBackgroundHandoffEnd
 internal const val PlayerContentAppearStart = 0.3f
 internal const val PlayerContentAppearEnd = 0.9f
 
@@ -21,6 +23,7 @@ internal fun easeInCubic(value: Float): Float = value.coerceIn(0f, 1f).let { it 
 internal fun easeOutCubic(value: Float): Float = 1f - easeInCubic(1f - value)
 internal fun playerBackgroundAlpha(progress: Float) = easeInCubic(progress / PlayerBackgroundHandoffEnd)
 internal fun playerPressHighlightAlpha(progress: Float) = 1f - easeOutCubic(progress / PlayerPressHighlightFadeEnd)
+internal fun playerPressHighlightRect(sourceSize: Size, container: Rect) = Rect(container.topLeft, sourceSize)
 internal fun playerMiniContentAlpha(progress: Float) = 1f - easeOutCubic(progress / PlayerMiniContentFadeEnd)
 internal fun playerContentAlpha(progress: Float) = easeInCubic(
     (progress - PlayerContentAppearStart) / (PlayerContentAppearEnd - PlayerContentAppearStart),
@@ -47,6 +50,24 @@ internal fun playerArtworkRect(source: Rect, target: Rect, progress: Float): Rec
     return Rect(centerX - width / 2, centerY - height / 2, centerX + width / 2, centerY + height / 2)
 }
 
+internal fun playerTopAnchoredArtworkRect(
+    source: Rect,
+    target: Rect,
+    sourceContainer: Rect,
+    targetContainer: Rect,
+    progress: Float,
+): Rect {
+    val p = progress.coerceIn(0f, 1f)
+    val artwork = playerArtworkRect(source, target, p)
+    val container = playerContainerRect(sourceContainer, targetContainer, p)
+    val top = container.top + mix(
+        source.top - sourceContainer.top,
+        target.top - targetContainer.top,
+        p,
+    )
+    return Rect(artwork.left, top, artwork.right, top + artwork.height)
+}
+
 internal fun playerDragOpens(velocityY: Float, lastDeltaY: Float, originOpen: Boolean): Boolean = when {
     velocityY < 0f -> true
     velocityY > 0f -> false
@@ -59,6 +80,41 @@ internal fun playerDragValue(value: Float, deltaPx: Float, density: Float, colla
     (value - deltaPx / density).coerceIn(collapsed, expanded.coerceAtLeast(collapsed))
 
 internal fun Rect.isUsable() = width > 0f && height > 0f
+
+internal data class PlayerArtworkGeometry(val bounds: Rect, val layoutSize: IntSize)
+
+internal fun playerArtworkTargetGeometry(
+    explicitGeometry: PlayerArtworkGeometry?,
+    host: Rect,
+    playbackScale: Float? = null,
+    measuredGeometry: () -> PlayerArtworkGeometry,
+): PlayerArtworkGeometry = explicitGeometry?.let {
+    // Explicit visual bounds are host-local; logical image size is never visual size.
+    it.copy(bounds = it.bounds.translate(host.topLeft))
+} ?: measuredGeometry().let { measured ->
+    if (playbackScale == null || !measured.bounds.isUsable() ||
+        measured.layoutSize.width <= 0 || measured.layoutSize.height <= 0
+    ) return@let measured
+    // Hidden layer transforms may retain an old playback scale; the center is stable.
+    val halfWidth = measured.layoutSize.width * playbackScale / 2f
+    val halfHeight = measured.layoutSize.height * playbackScale / 2f
+    val center = measured.bounds.center
+    measured.copy(bounds = Rect(
+        center.x - halfWidth, center.y - halfHeight,
+        center.x + halfWidth, center.y + halfHeight,
+    ))
+}
+
+internal fun playerSharesArtwork(
+    transitioning: Boolean,
+    enabled: Boolean,
+    sourceAvailable: Boolean,
+    source: Rect,
+    target: Rect,
+    host: Rect,
+): Boolean = transitioning && enabled && sourceAvailable &&
+    source.isUsable() && target.isUsable() && host.isUsable()
+
 internal fun mix(start: Float, end: Float, progress: Float) = start + (end - start) * progress
 
 
@@ -90,3 +146,18 @@ internal fun playerUntransformRect(rect: Rect, visual: Rect, layout: Rect): Rect
         layout.top + (rect.bottom - visual.top) * layout.height / visual.height,
     )
 }
+
+internal fun playerMiniLayoutRect(
+    visualContainer: Rect?,
+    localPressedBounds: Rect,
+    layoutSize: IntSize,
+    fallback: Rect,
+): Rect = if (visualContainer?.isUsable() == true && localPressedBounds.isUsable() &&
+    layoutSize.width > 0 && layoutSize.height > 0
+) {
+    playerUntransformRect(
+        Rect(0f, 0f, layoutSize.width.toFloat(), layoutSize.height.toFloat()),
+        localPressedBounds,
+        visualContainer,
+    )
+} else fallback

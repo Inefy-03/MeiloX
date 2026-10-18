@@ -452,7 +452,7 @@ fun GlassSurface(
     sampleBackdrop: Boolean = true,
     exportedBackdrop: LayerBackdrop? = null,
     onVisualBoundsChanged: ((Rect, GlassPressHighlight) -> Unit)? = null,
-    pressHighlight: GlassPressHighlight? = null,
+    pressHighlight: (() -> GlassPressHighlight?)? = null,
     cancelPressFeedback: Boolean = false,
     morphProgress: androidx.compose.runtime.State<Float>? = null,
     morphCaptureWidth: Dp? = null,
@@ -477,7 +477,7 @@ fun GlassSurface(
         GlassEmphasis.Prominent -> colors.prominentContainer
     }
     val pressProgressState = remember(interactiveHighlight, pressHighlight) {
-        derivedStateOf { pressHighlight?.progress ?: interactiveHighlight.pressProgress }
+        derivedStateOf { pressHighlight?.invoke()?.progress ?: interactiveHighlight.pressProgress }
     }
     val shapeProvider = remember(shape) { { shape } }
     val dragScaleLayerBlock: GraphicsLayerScope.() -> Unit = remember(interactiveHighlight, onVisualBoundsChanged) {
@@ -642,8 +642,11 @@ fun GlassSurface(
         modifier = surfaceModifier
             .then(
                 if (pressHighlight != null) interactiveHighlight.highlightModifier(
-                    progressProvider = { pressHighlight.progress },
-                    positionProvider = { Offset(it.width * pressHighlight.position.x, it.height * pressHighlight.position.y) },
+                    progressProvider = { pressHighlight()?.progress ?: interactiveHighlight.pressProgress },
+                    positionProvider = { size ->
+                        pressHighlight()?.let { Offset(size.width * it.position.x, size.height * it.position.y) }
+                            ?: interactiveHighlight.highlightPosition(size)
+                    },
                 ) else if (onClick != null && enabled) interactiveHighlight.modifier else Modifier,
             )
             .then(

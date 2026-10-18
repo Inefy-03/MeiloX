@@ -122,7 +122,7 @@ fun PlayerHeader(
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier.padding(horizontal = 10.dp)
+            modifier = Modifier.padding(start = 10.dp, end = 8.dp)
         ) {
             IconButton(
                 onClick = onLikeClick,

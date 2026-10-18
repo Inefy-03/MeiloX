@@ -63,6 +63,7 @@ class BottomSheetState internal constructor(
         expandedAnchor -> value < expandedBound
         else -> value > collapsedBound
     })
+    internal val isContentVisible get() = isExpanded || isTransitioning
 
     fun collapse(animationSpec: AnimationSpec<Dp>) = settle(collapsedAnchor, animationSpec)
     fun expand(animationSpec: AnimationSpec<Dp>) = settle(expandedAnchor, animationSpec)

@@ -37,6 +37,7 @@ internal fun PlayerTransitionGlass(
         val radius = playerContainerCornerRadius(
             layers.sourceContainer.height / 2f, expandedCornerRadius, p,
         ).coerceIn(0f, bounds.size.minDimension / 2f)
+        val pressHighlight = layers.transitionPressHighlight
         renderer.draw(
             scope = this,
             coordinates = coordinates,
@@ -46,7 +47,9 @@ internal fun PlayerTransitionGlass(
             radius = radius,
             shape = ContinuousRoundedRectangle(radius.toDp()),
             tint = tint,
-            highlightAlpha = 0.5f * (0.54f + 0.38f * layers.transitionPressHighlight.progress),
+            highlightAlpha = 0.5f * 0.54f,
+            pressHighlight = pressHighlight,
+            pressHighlightBounds = layers.transitionPressHighlightBounds.translate(-layers.hostBounds.topLeft),
         )
     }
 }

@@ -43,6 +43,12 @@ internal class LyricManualScrollState {
         returnToPlaybackPending = true
     }
 
+    fun onHidden() {
+        isBrowsing = false
+        isDragging = false
+        returnToPlaybackPending = true
+    }
+
     fun onPlaybackPositioned() {
         // A new drag may start while the previous scroll's child coroutine finishes.
         if (!isBrowsing) returnToPlaybackPending = false
