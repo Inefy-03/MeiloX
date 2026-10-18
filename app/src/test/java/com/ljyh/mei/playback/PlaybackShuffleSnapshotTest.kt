@@ -3,12 +3,14 @@ package com.ljyh.mei.playback
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.preferencesOf
 import com.google.gson.Gson
+import com.google.gson.JsonParser
 import com.ljyh.mei.constants.RestorePlaybackPositionKey
 import com.ljyh.mei.constants.RestorePlaybackStateKey
 import com.ljyh.mei.playback.queue.PlaylistQueueSource
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -127,5 +129,84 @@ class PlaybackShuffleSnapshotTest {
         assertEquals(paused, paused.withRestorePreferences(emptyPreferences()))
         assertEquals(paused, paused.withRestorePreferences(preferencesOf(RestorePlaybackStateKey to true)))
         assertEquals(0L, paused.copy(positionMs = -1L).withRestorePreferences(emptyPreferences()).positionMs)
+    }
+
+    @Test
+    fun checkpointWritesCanonicalKeysAndRewritesVerifiedLegacyKeys() {
+        val checkpoint = PlaybackCheckpoint(100L, 200L, 1, 12345L, 2, true, false)
+        val canonical = """{"queueSavedAtEpochMs":100,"savedAtEpochMs":200,"currentIndex":1,"positionMs":12345,"repeatMode":2,"shuffleModeEnabled":true,"playWhenReady":false}"""
+        val legacy = """{"a":100,"b":200,"c":1,"d":12345,"e":2,"f":true,"g":false}"""
+
+        assertEquals(JsonParser.parseString(canonical), JsonParser.parseString(gson.toJson(checkpoint)))
+        listOf(canonical, legacy).forEach { encoded ->
+            val restored = gson.fromJson(encoded, PlaybackCheckpoint::class.java)
+            assertEquals(checkpoint, restored)
+            assertEquals(JsonParser.parseString(canonical), JsonParser.parseString(gson.toJson(restored)))
+        }
+    }
+
+    @Test
+    fun legacyCheckpointOverridesOlderPlaybackStateWithoutReplacingQueueOrSimilarFmSource() {
+        val saved = PlaybackSnapshot(
+            savedAtEpochMs = 100L,
+            items = listOf("11", "22").map { PlaybackItemSnapshot(mediaId = it) },
+            sourceType = PlaybackSnapshot.SOURCE_PERSONAL_FM,
+            similarFmSourceIds = listOf("42", "19"),
+            shuffleOrder = listOf(1, 0),
+            playWhenReady = true,
+        )
+        val legacy = gson.fromJson(
+            """{"a":100,"b":200,"c":1,"d":12345,"e":2,"f":true,"g":false}""",
+            PlaybackCheckpoint::class.java,
+        )
+        val restored = saved.withCheckpoint(legacy)
+
+        assertFalse(restored.playWhenReady)
+        assertEquals(1, restored.currentIndex)
+        assertEquals(12345L, restored.positionMs)
+        assertEquals(200L, restored.savedAtEpochMs)
+        assertTrue(restored.shuffleModeEnabled)
+        assertSame(saved.items, restored.items)
+        assertSame(saved.shuffleOrder, restored.shuffleOrder)
+        assertEquals(saved.similarFmSourceIds, restored.similarFmSourceIds)
+        assertTrue(restored.isFmMode)
+        assertEquals(0L, restored.withRestorePreferences(
+            preferencesOf(RestorePlaybackPositionKey to false),
+        ).positionMs)
+    }
+
+    @Test
+    fun checkpointKeepsLongPrecisionAndExplicitPlayingStateAcrossBothFormats() {
+        val checkpoint = PlaybackCheckpoint(1_790_000_000_001L, 1_790_000_000_002L, 1, 4_000_000_000L, 2, false, true)
+        val legacy = """{"a":1790000000001,"b":1790000000002,"c":1,"d":4000000000,"e":2,"f":false,"g":true}"""
+        val saved = PlaybackSnapshot(
+            savedAtEpochMs = checkpoint.queueSavedAtEpochMs,
+            items = listOf(PlaybackItemSnapshot("11"), PlaybackItemSnapshot("22")),
+        )
+
+        listOf(legacy, gson.toJson(checkpoint)).forEach { encoded ->
+            val restored = gson.fromJson(encoded, PlaybackCheckpoint::class.java)
+            assertEquals(checkpoint, restored)
+            assertTrue(saved.withCheckpoint(restored).playWhenReady)
+            assertFalse(saved.withCheckpoint(restored).withRestorePreferences(
+                preferencesOf(RestorePlaybackStateKey to false),
+            ).playWhenReady)
+        }
+    }
+
+    @Test
+    fun legacyCheckpointStillRejectsUnrelatedQueuesAndInvalidProgress() {
+        val saved = PlaybackSnapshot(
+            savedAtEpochMs = 100L,
+            items = listOf(PlaybackItemSnapshot("11"), PlaybackItemSnapshot("22")),
+        )
+        listOf(
+            """{"a":99,"b":200,"c":1,"d":12345,"e":2,"f":true,"g":false}""",
+            """{"a":100,"b":200,"c":2,"d":12345,"e":2,"f":true,"g":false}""",
+            """{"a":100,"b":200,"c":1,"d":-1,"e":2,"f":true,"g":false}""",
+            """{"a":100,"b":200,"c":1,"d":12345,"e":3,"f":true,"g":false}""",
+        ).forEach { encoded ->
+            assertSame(saved, saved.withCheckpoint(gson.fromJson(encoded, PlaybackCheckpoint::class.java)))
+        }
     }
 }
