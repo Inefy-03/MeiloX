@@ -21,7 +21,10 @@ class SearchRepository(
                         s = keyword,
                         type = type,
                         limit = limit
-                    )
+                    ),
+                    // The legacy radio search can return unrelated hot radios under the Android profile.
+                    // Select its desktop search contract without changing the account session.
+                    cookieOs = if (type == 1009) "pc" else null,
                 )
             }
         }

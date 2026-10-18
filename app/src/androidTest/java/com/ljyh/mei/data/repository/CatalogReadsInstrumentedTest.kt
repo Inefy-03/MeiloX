@@ -1,12 +1,19 @@
 package com.ljyh.mei.data.repository
 
+import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.ljyh.mei.AppContext
 import com.ljyh.mei.constants.CookieKey
 import com.ljyh.mei.data.network.Resource
+import com.ljyh.mei.data.network.NeteaseSessionType
+import com.ljyh.mei.data.network.neteaseSessionType
 import com.ljyh.mei.di.RetrofitModule
 import com.ljyh.mei.utils.dataStore
+import java.io.IOException
 import kotlinx.coroutines.flow.first
+import okhttp3.Interceptor
+import okhttp3.OkHttpClient
+import org.junit.Assume.assumeTrue
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -83,4 +90,56 @@ class CatalogReadsInstrumentedTest {
         assertTrue(first.programs.single().id != second.programs.single().id)
         assertTrue("The account credential must remain unchanged", before == context.dataStore.data.first()[CookieKey])
     }
+
+    @Test
+    fun podcastSearchUsesRelevantDesktopResultsWithoutReplacingTheMobileSession() = runBlocking<Unit> {
+        val context = AppContext.instance
+        val before = context.dataStore.data.first()
+        assumeTrue("An existing mobile session is required", before.neteaseSessionType() == NeteaseSessionType.Mobile)
+        val readOnly = readOnlyCatalogClient()
+        try {
+            val repository = SearchRepository(
+                RetrofitModule.provideApiService(RetrofitModule.provideRetrofit(readOnly)),
+            )
+            val result = repository.search("HOYO", type = 1009, limit = 10)
+            assertTrue("Podcast search failed", result is Resource.Success)
+            val podcasts = (result as Resource.Success).data.result.podcasts.orEmpty()
+            val matches = podcasts.take(5).count { it.name.contains("HOYO", ignoreCase = true) }
+            assertTrue("Leading radio results must match the HOYO query", matches > 0)
+            Log.i("CatalogReads", "podcast results=${podcasts.size} matchingLeading=$matches session=Mobile")
+        } finally {
+            assertTrue(
+                "The existing account credential must remain unchanged",
+                before[CookieKey] == context.dataStore.data.first()[CookieKey],
+            )
+            assertEquals(NeteaseSessionType.Mobile, context.dataStore.data.first().neteaseSessionType())
+            readOnly.connectionPool.evictAll()
+            readOnly.dispatcher.executorService.shutdown()
+        }
+    }
+
+    private fun readOnlyCatalogClient(): OkHttpClient {
+        val allowedPaths = setOf(
+            "/api/search/get", "/weapi/search/get", "/eapi/search/get",
+        )
+        val guard = Interceptor { chain ->
+            val url = chain.request().url
+            if (url.host !in setOf("music.163.com", "interface.music.163.com") ||
+                url.encodedPath.trimEnd('/') !in allowedPaths
+            ) throw IOException("This regression allows catalog reads only")
+            // Reading another account must not accept background session-cookie updates.
+            chain.proceed(chain.request()).newBuilder()
+                .removeHeader("Set-Cookie")
+                .removeHeader("x-encr-ssid")
+                .removeHeader("x-encr-sskey")
+                .build()
+        }
+        return RetrofitModule.provideOkHttpClient().newBuilder().apply {
+            interceptors().add(0, guard)
+            addNetworkInterceptor(guard)
+            followRedirects(false)
+            followSslRedirects(false)
+        }.build()
+    }
+
 }

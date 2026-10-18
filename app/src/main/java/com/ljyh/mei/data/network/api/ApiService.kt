@@ -47,6 +47,7 @@ import com.ljyh.mei.data.model.weapi.Comment
 import com.ljyh.mei.data.model.weapi.Like
 import com.ljyh.mei.data.model.weapi.LikeResult
 import retrofit2.http.Body
+import retrofit2.http.Header
 import retrofit2.http.Headers
 import retrofit2.http.POST
 import retrofit2.http.Path
@@ -116,7 +117,8 @@ interface ApiService {
 
     @POST("/api/search/get/")
     suspend fun search(
-        @Body body: GetSearch
+        @Body body: GetSearch,
+        @Header("X-Netease-Cookie-OS") cookieOs: String? = null,
     ): SearchResult
 
 
