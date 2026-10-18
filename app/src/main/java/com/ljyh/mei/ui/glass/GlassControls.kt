@@ -51,9 +51,12 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -110,7 +113,7 @@ fun GlassToggle(
     val currentOnCheckedChange by rememberUpdatedState(onCheckedChange)
     var didDrag by remember { mutableStateOf(false) }
     var fraction by remember { mutableFloatStateOf(if (checked) 1f else 0f) }
-    val animation = remember(scope, enabled) {
+    val animation = remember(scope, enabled, travelPx, ltr) {
         DampedDragAnimation(
             animationScope = scope,
             initialValue = fraction,
@@ -122,7 +125,7 @@ fun GlassToggle(
             onDragStopped = {
                 if (!currentEnabled) return@DampedDragAnimation
                 fraction = if (didDrag) {
-                    if (targetValue >= 0.5f) 1f else 0f
+                    if (fraction >= 0.5f) 1f else 0f
                 } else if (currentChecked) 0f else 1f
                 didDrag = false
                 currentOnCheckedChange(fraction == 1f)
@@ -133,6 +136,11 @@ fun GlassToggle(
                 val delta = dragAmount.x / travelPx
                 fraction = if (ltr) (fraction + delta).fastCoerceIn(0f, 1f)
                 else (fraction - delta).fastCoerceIn(0f, 1f)
+            },
+            consumeGestures = true,
+            onDragCancelled = {
+                didDrag = false
+                fraction = if (currentChecked) 1f else 0f
             },
         )
     }
@@ -203,7 +211,15 @@ fun GlassToggle(
     Box(
         modifier = modifier
             .size(width = 64.dp, height = 28.dp)
-            .semantics { role = Role.Switch }
+            .semantics(mergeDescendants = true) {
+                role = Role.Switch
+                toggleableState = if (checked) ToggleableState.On else ToggleableState.Off
+                if (!enabled) disabled()
+                onClick {
+                    if (currentEnabled) currentOnCheckedChange(!currentChecked)
+                    currentEnabled
+                }
+            }
             .then(if (enabled) animation.modifier else Modifier),
         contentAlignment = Alignment.CenterStart,
     ) {
