@@ -2,10 +2,14 @@ package com.ljyh.mei.ui.component.player.component.mesh
 
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.util.Log
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.MonotonicFrameClock
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.AndroidUiDispatcher
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -19,6 +23,14 @@ import com.ljyh.mei.ui.component.player.LocalPlayerBackgroundReadyChanged
 import com.ljyh.mei.ui.component.player.component.FluidBackground
 import java.io.File
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -33,10 +45,13 @@ class MeshStaticFrameTest {
 
     @Test
     fun settledStaticLayerSurvivesExplicitRedrawsWithoutAnimating() {
-        val renderer = MeshGradientRenderer().apply {
-            staticMode = true
-            setAlbum(meshTestAlbum())
-            advanceFrame(StartNanos)
+        val album = meshTestAlbum()
+        val renderer = compose.runOnIdle {
+            MeshGradientRenderer().apply {
+                staticMode = true
+                setAlbum(album)
+                advanceFrame(StartNanos)
+            }
         }
         val host = MeshRenderTestHost(compose, renderer)
         host.show()
@@ -68,10 +83,13 @@ class MeshStaticFrameTest {
 
     @Test
     fun resumingPlaybackExcludesTimeSpentPaused() {
-        val renderer = MeshGradientRenderer().apply {
-            setAlbum(meshTestAlbum())
-            advanceFrame(StartNanos)
-            advanceFrame(StartNanos + FrameNanos)
+        val album = meshTestAlbum()
+        val renderer = compose.runOnIdle {
+            MeshGradientRenderer().apply {
+                setAlbum(album)
+                advanceFrame(StartNanos)
+                advanceFrame(StartNanos + FrameNanos)
+            }
         }
         val host = MeshRenderTestHost(compose, renderer)
         host.show()
@@ -94,6 +112,76 @@ class MeshStaticFrameTest {
         assertTrue("Flow must advance after playback resumes", advanced.indices.any {
             colorDistance(advanced[it], resumed[it]) > 2
         })
+    }
+
+    @Test
+    fun realFrameClockPacesRequestsAndStopsWithoutPollingDisplayFrames() {
+        compose.setContent { Spacer(Modifier.size(1.dp)) }
+        val uiContext = AndroidUiDispatcher.Main
+        val realClock = checkNotNull(uiContext[MonotonicFrameClock])
+        var requests = 0
+        var callbacks = 0
+        val countingClock = object : MonotonicFrameClock {
+            override suspend fun <R> withFrameNanos(onFrame: (Long) -> R): R {
+                requests++
+                return realClock.withFrameNanos {
+                    callbacks++
+                    onFrame(it)
+                }
+            }
+        }
+
+        runBlocking {
+            withContext(uiContext + countingClock) {
+                withTimeout(10_000) {
+                    for (targetHz in listOf(30, 60)) {
+                        requests = 0
+                        callbacks = 0
+                        var animating = true
+                        val drawTimes = mutableListOf<Long>()
+                        runMeshFrames(1_000_000_000L / targetHz, { animating }) { frameNanos ->
+                            drawTimes += frameNanos
+                            if (frameNanos - drawTimes.first() >= 1_200_000_000L) animating = false
+                        }
+                        val elapsedSeconds = (drawTimes.last() - drawTimes.first()) / 1_000_000_000.0
+                        val observedHz = (drawTimes.size - 1) / elapsedSeconds
+                        Log.i("MeshFrameClockTest",
+                            "targetHz=$targetHz observedHz=$observedHz requests=$requests callbacks=$callbacks")
+                        assertEquals("Every registered frame must advance the mesh", requests, drawTimes.size)
+                        assertEquals(drawTimes.size, callbacks)
+                        assertTrue("The real frame clock must retain $targetHz Hz cadence: $observedHz",
+                            observedHz in (targetHz * 0.75)..(targetHz * 1.1))
+                        val stoppedRequests = requests
+                        delay(100)
+                        assertEquals("A settled animation must stop requesting frames", stoppedRequests, requests)
+                    }
+
+                    requests = 0
+                    callbacks = 0
+                    val firstFrame = CompletableDeferred<Unit>()
+                    val delayedWork = launch {
+                        runMeshFrames(100_000_000L, { true }) { firstFrame.complete(Unit) }
+                    }
+                    firstFrame.await()
+                    delay(20)
+                    delayedWork.cancelAndJoin()
+                    assertEquals("Cancellation during pacing must retain just the first request", 1, requests)
+                    assertEquals(1, callbacks)
+                    delay(150)
+                    assertEquals("Cancelled pacing must stay idle", 1, requests)
+
+                    val awaitingWork = launch(start = CoroutineStart.UNDISPATCHED) {
+                        runMeshFrames(100_000_000L, { true }) {
+                            throw AssertionError("A cancelled frame wait must never advance the mesh")
+                        }
+                    }
+                    assertEquals("The cancellation case must suspend in a real frame wait", 2, requests)
+                    awaitingWork.cancelAndJoin()
+                    delay(100)
+                    assertEquals("Cancelled frame waits must not invoke their callback", 1, callbacks)
+                }
+            }
+        }
     }
 
     @Test
@@ -171,17 +259,21 @@ class MeshStaticFrameTest {
     }
 
     private fun assertAlbumCrossfadeSettles(staticMode: Boolean) {
-        val renderer = MeshGradientRenderer().apply {
-            this.staticMode = staticMode
-            isPlaying = false
-            setAlbum(meshTestAlbum(Color.rgb(220, 50, 50)))
-            advanceFrame(StartNanos)
+        val album = meshTestAlbum(Color.rgb(220, 50, 50))
+        val nextAlbum = meshTestAlbum(Color.rgb(50, 50, 220))
+        val renderer = compose.runOnIdle {
+            MeshGradientRenderer().apply {
+                this.staticMode = staticMode
+                isPlaying = false
+                setAlbum(album)
+                advanceFrame(StartNanos)
+            }
         }
         val host = MeshRenderTestHost(compose, renderer)
         host.show()
         val initial = host.capture()
         val transitioning = host.capture {
-            renderer.setAlbum(meshTestAlbum(Color.rgb(50, 50, 220)))
+            renderer.setAlbum(nextAlbum)
             assertTrue("An album change must schedule its crossfade", renderer.needsAnimation)
             repeat(3) { renderer.advanceFrame(StartNanos + (it + 1) * FrameNanos) }
             assertTrue("The crossfade must remain active before it settles", renderer.needsAnimation)

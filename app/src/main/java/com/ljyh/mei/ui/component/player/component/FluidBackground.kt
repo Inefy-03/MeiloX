@@ -11,7 +11,6 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.graphicsLayer
@@ -35,13 +34,13 @@ import com.ljyh.mei.playback.PlaybackSpectrum
 import com.ljyh.mei.ui.component.player.LocalPlayerBackgroundReadyChanged
 import com.ljyh.mei.ui.component.player.component.mesh.MeshAlbum
 import com.ljyh.mei.ui.component.player.component.mesh.MeshGradientRenderer
+import com.ljyh.mei.ui.component.player.component.mesh.runMeshFrames
 import com.ljyh.mei.ui.component.sheet.LocalPlayerSheet
 import com.ljyh.mei.ui.component.sheet.playerBackgroundAlpha
 import com.ljyh.mei.ui.component.utils.LifecycleStartedEffect
 import com.ljyh.mei.ui.glass.trackBackdropPosition
 import com.ljyh.mei.utils.rememberPreference
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 
 @Composable
@@ -76,8 +75,8 @@ fun FluidBackground(
     val shouldAnimate = !meshPlaying || isPlaying
     val audioReactive = backgroundActive && expanded && isPlaying && !staticMode && sensitivity > 0f
 
-    // Keep the last album visible while Coil prepares the next mesh. Only immutable
-    // album data crosses dispatchers; drawing and shader uniforms stay on main.
+    // Prepare each album and its exclusive shader off main. After publication,
+    // only the renderer updates uniforms; the previous album stays visible meanwhile.
     val album by produceState<MeshAlbum?>(null, imageUrl) {
         if (imageUrl.isNullOrEmpty()) return@produceState
         val result = context.imageLoader.execute(
@@ -119,21 +118,13 @@ fun FluidBackground(
         // Never include elapsed hidden/stopped time in flow or crossfade progression.
         renderer.resetFrameClock()
         if (!backgroundActive) return@LifecycleStartedEffect
-        var nextDrawNanos = 0L
-        do {
-            withFrameNanos { now ->
-                // Ambient flow retains its 30 Hz budget; beat response follows 60 Hz.
-                val interval = if (audioReactive) 16_666_667L else 33_333_333L
-                if (nextDrawNanos == 0L) nextDrawNanos = now
-                if (now >= nextDrawNanos) {
-                    renderer.advanceFrame(now)
-                    frameVersion.intValue++
-                    // Keep the average cadence on 90/144 Hz displays and skip missed
-                    // deadlines without issuing a burst of catch-up draws.
-                    nextDrawNanos += ((now - nextDrawNanos) / interval + 1L) * interval
-                }
-            }
-        } while (isActive && renderer.needsAnimation)
+        runMeshFrames(
+            intervalNanos = if (audioReactive) 16_666_667L else 33_333_333L,
+            needsAnimation = { renderer.needsAnimation },
+        ) { now ->
+            renderer.advanceFrame(now)
+            frameVersion.intValue++
+        }
     }
 
     DisposableEffect(Unit) {

@@ -2,6 +2,7 @@ package com.ljyh.mei.ui.component.player.component.mesh
 
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.os.Looper
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.mutableIntStateOf
@@ -16,9 +17,13 @@ import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.ljyh.mei.playback.PlaybackSpectrum
 import kotlin.math.abs
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -30,11 +35,14 @@ class MeshAudioResponseTest {
 
     @Test
     fun maximumResponseKeepsNeutralArtworkOpaqueAndMovesColoredArtwork() {
-        val renderer = MeshGradientRenderer().apply {
-            flowSpeed = 0f
-            // The album color pipeline maps this gray to the shader's neutral 128.
-            setAlbum(meshTestAlbum(Color.rgb(191, 191, 191)))
-            advanceFrame(StartNanos)
+        // The album color pipeline maps this gray to the shader's neutral 128.
+        val neutralAlbum = meshTestAlbum(Color.rgb(191, 191, 191))
+        val renderer = compose.runOnIdle {
+            MeshGradientRenderer().apply {
+                flowSpeed = 0f
+                setAlbum(neutralAlbum)
+                advanceFrame(StartNanos)
+            }
         }
         val host = MeshRenderTestHost(compose, renderer)
         host.show()
@@ -51,10 +59,11 @@ class MeshAudioResponseTest {
         }
         assertArrayEquals("Drawing the same frame twice must preserve backdrop sampling", peak, host.capture())
 
+        val coloredAlbum = meshTestAlbum()
         val colored = host.capture {
             renderer.audioStrength = 0f
             renderer.spectrum = PlaybackSpectrum.Zero
-            renderer.setAlbum(meshTestAlbum())
+            renderer.setAlbum(coloredAlbum)
             repeat(10) { renderer.advanceFrame(StartNanos + (it + 13) * FrameNanos) }
         }
         val expanded = host.capture {
@@ -88,6 +97,81 @@ class MeshAudioResponseTest {
         } finally {
             source.recycle()
         }
+    }
+
+    @Test
+    fun backgroundPreparedShadersSurviveAlbumReentryDuringAndAfterCrossfade() {
+        val albums = runBlocking {
+            withContext(Dispatchers.Default) {
+                assertNotSame("Album preparation must run off main", Looper.getMainLooper(), Looper.myLooper())
+                listOf(
+                    meshTestAlbum(Color.rgb(210, 80, 40)),
+                    meshTestAlbum(Color.rgb(40, 80, 210)),
+                    meshTestAlbum(Color.rgb(210, 80, 40)),
+                )
+            }
+        }
+        // Shader objects already exist before main-thread adoption. Even preparing
+        // the same artwork again must provide independent mutable uniforms.
+        assertNotSame(albums[0].shader, albums[1].shader)
+        assertNotSame(albums[0].shader, albums[2].shader)
+        val renderer = compose.runOnIdle {
+            MeshGradientRenderer().apply {
+                isPlaying = false
+                flowSpeed = 0f
+            }
+        }
+        val host = MeshRenderTestHost(compose, renderer)
+        var frameNanos = StartNanos
+        fun advanceFrames(count: Int) {
+            repeat(count) {
+                frameNanos += FrameNanos
+                renderer.advanceFrame(frameNanos)
+            }
+        }
+        host.show()
+        val red = host.capture {
+            assertEquals(Looper.getMainLooper(), Looper.myLooper())
+            renderer.setAlbum(albums[0])
+            renderer.advanceFrame(frameNanos)
+        }
+        val fadingToBlue = host.capture {
+            renderer.setAlbum(albums[1])
+            advanceFrames(3)
+        }
+        assertTrue("A new album must become visible during its crossfade",
+            red.indices.count { colorDistance(red[it], fadingToBlue[it]) > 5 } > red.size / 2)
+
+        val reentered = host.capture {
+            renderer.setAlbum(albums[0])
+        }
+        assertArrayEquals("Reversing a fade must preserve the current compositing order", fadingToBlue, reentered)
+        val returnedDuringFade = host.capture {
+            advanceFrames(10)
+        }
+        assertArrayEquals("Returning to a fading album must restore its own texture", red, returnedDuringFade)
+        val blue = host.capture {
+            renderer.setAlbum(albums[1])
+            advanceFrames(10)
+        }
+        assertTrue("Distinct shaders must keep the two album textures independent",
+            red.indices.count { colorDistance(red[it], blue[it]) > 5 } > red.size / 2)
+        assertTrue("A crossfade must retain the outgoing album until it completes",
+            blue.indices.count { colorDistance(blue[it], fadingToBlue[it]) > 5 } > blue.size / 2)
+
+        val returnedAfterFade = host.capture {
+            renderer.setAlbum(albums[0])
+            advanceFrames(10)
+        }
+        assertArrayEquals("A retired album can be adopted again without compiling on main", red, returnedAfterFade)
+        assertArrayEquals("Repeated adoption must leave a completed frame unchanged", red, host.capture {
+            repeat(3) { renderer.setAlbum(albums[0]) }
+        })
+        assertFalse("Paused reentry must settle when the crossfade completes", renderer.needsAnimation)
+        assertArrayEquals("A newly prepared copy must keep the same visual result", red, host.capture {
+            renderer.setAlbum(albums[2])
+            advanceFrames(10)
+        })
     }
 }
 

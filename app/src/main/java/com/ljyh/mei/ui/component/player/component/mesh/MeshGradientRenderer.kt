@@ -7,6 +7,8 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RuntimeShader
 import android.graphics.Shader
+import androidx.annotation.MainThread
+import androidx.annotation.WorkerThread
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -22,29 +24,23 @@ import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.roundToInt
 
-/** Immutable album preparation; construction belongs on a worker dispatcher. */
+/** Prepared on a worker, then owned by one renderer, including its mutable shader. */
 internal class MeshAlbum internal constructor(
     internal val bitmap: Bitmap,
     internal val positions: FloatArray,
     internal val textureCoordinates: FloatArray,
     internal val indices: ShortArray,
+    internal val shader: RuntimeShader,
 )
 
 /** Main-thread renderer shared by the player and its glass backdrop. */
+@MainThread
 internal class MeshGradientRenderer {
     private class MeshState(val album: MeshAlbum, var alpha: Float) {
         var targetAlpha = if (alpha == 1f) 0f else 1f
-        val shader = RuntimeShader(ShaderSource.MESH_SHADER).apply {
-            setInputShader(
-                "albumTexture",
-                BitmapShader(album.bitmap, Shader.TileMode.MIRROR, Shader.TileMode.MIRROR).apply {
-                    setFilterMode(BitmapShader.FILTER_MODE_LINEAR)
-                },
-            )
-            setFloatUniform("textureSize", album.bitmap.width.toFloat(), album.bitmap.height.toFloat())
-        }
+        val shader = album.shader
         // Each album is first rendered in its own layer, matching the old unblended FBO.
-        val meshPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        val meshPaint = Paint().apply {
             shader = this@MeshState.shader
             blendMode = BlendMode.SRC
         }
@@ -69,6 +65,7 @@ internal class MeshGradientRenderer {
     }
 
     private val meshStates = mutableListOf<MeshState>()
+    private var currentAlbum: MeshAlbum? = null
     private var accumulatedPlayingNanos = 0L
     private var lastFrameNanos: Long? = null
     private var revision = 0L
@@ -123,10 +120,19 @@ internal class MeshGradientRenderer {
     private var audioSaturation = 1f
 
     fun setAlbum(album: MeshAlbum) {
-        if (meshStates.firstOrNull()?.album === album) return
+        if (currentAlbum === album) return
         val firstAlbum = meshStates.isEmpty()
+        // A returning album must reuse its fading state: its mutable shader may only
+        // belong to one state, even when A -> B -> A happens before a fade completes.
+        val returningState = meshStates.firstOrNull { it.album === album }
         meshStates.forEach { it.targetAlpha = -1f }
-        meshStates.add(0, MeshState(album, if (firstAlbum) 1f else 0f))
+        if (returningState != null) {
+            // Preserve compositing order so reversing a fade does not jump visually.
+            returningState.targetAlpha = 1f
+        } else {
+            meshStates.add(0, MeshState(album, if (firstAlbum) 1f else 0f))
+        }
+        currentAlbum = album
         revision++
     }
 
@@ -190,7 +196,7 @@ internal class MeshGradientRenderer {
 
     private fun drawMeshes(canvas: Canvas, size: IntSize) {
         val time = accumulatedPlayingNanos / 1e9f * flowSpeed
-        // States are stored newest first. Preserve source-over order from oldest to newest.
+        // Keep insertion order, oldest to newest, even when an existing state returns.
         for (index in meshStates.lastIndex downTo 0) {
             val state = meshStates[index]
             val alpha = (1f - cos(state.alpha.coerceIn(0f, 1f) * Math.PI.toFloat())) * .5f
@@ -245,6 +251,7 @@ internal class MeshGradientRenderer {
     companion object {
         private val random = java.util.Random()
 
+        @WorkerThread
         fun prepareAlbum(bitmap: Bitmap, subdivision: Int, preset: ControlPointPreset? = null): MeshAlbum {
             // Scaling a 32px source can alias it, and the processor recycles its temporary.
             // Always give it a private bitmap rather than an image-loader-owned instance.
@@ -278,7 +285,18 @@ internal class MeshGradientRenderer {
             }
             val indexBuffer = mesh.generateIndexBuffer()
             val indices = ShortArray(mesh.indices) { indexBuffer[it].toShort() }
-            return MeshAlbum(processed, positions, textureCoordinates, indices)
+            // RuntimeShader compiles synchronously. Complete compilation and texture
+            // binding here, before the prepared album is handed to the main thread.
+            val shader = RuntimeShader(ShaderSource.MESH_SHADER).apply {
+                setInputShader(
+                    "albumTexture",
+                    BitmapShader(processed, Shader.TileMode.MIRROR, Shader.TileMode.MIRROR).apply {
+                        setFilterMode(BitmapShader.FILTER_MODE_LINEAR)
+                    },
+                )
+                setFloatUniform("textureSize", processed.width.toFloat(), processed.height.toFloat())
+            }
+            return MeshAlbum(processed, positions, textureCoordinates, indices, shader)
         }
     }
 }
