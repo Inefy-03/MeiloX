@@ -55,6 +55,12 @@ interface DownloadDao {
     @Query("UPDATE download_task SET status = :status, progress = :progress, updatedAt = :time WHERE songId = :songId")
     suspend fun updateProgress(songId: String, status: DownloadStatus, progress: Int, time: Long)
 
+    @Query("UPDATE download_task SET requestId = :requestId WHERE songId = :songId AND requestId = '' AND status IN ('PENDING', 'DOWNLOADING')")
+    suspend fun claimLegacyRequest(songId: String, requestId: String): Int
+
+    @Query("UPDATE download_task SET status = :status, progress = :progress, updatedAt = :time WHERE songId = :songId AND requestId = :requestId AND status IN ('PENDING', 'DOWNLOADING')")
+    suspend fun updateOwnedProgress(songId: String, requestId: String, status: DownloadStatus, progress: Int, time: Long): Int
+
     @Query("UPDATE download_task SET url = :url, fileName = :fileName, fileType = :fileType WHERE songId = :songId")
     suspend fun updateFileInfo(songId: String, url: String, fileName: String, fileType: String)
 

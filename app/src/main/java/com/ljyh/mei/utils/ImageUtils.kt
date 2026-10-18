@@ -20,6 +20,8 @@ import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
 import androidx.core.graphics.createBitmap
 import com.ljyh.mei.playback.DownloadWorker
+import com.ljyh.mei.playback.readDownloadResponse
+import kotlinx.coroutines.CancellationException
 
 fun String.smallImage(): String {
     if (this.startsWith("/")) return this
@@ -61,12 +63,9 @@ object ImageUtils {
         .build()
 
     suspend fun downloadImageBytes(imageUrl: String): ByteArray? = withContext(Dispatchers.IO) {
-        val request = Request.Builder()
-            .url(imageUrl)
-            .build()
-
         try {
-            val result = httpClient.newCall(request).execute().use { response ->
+            val request = Request.Builder().url(imageUrl).build()
+            val result = readDownloadResponse(httpClient, request) { response ->
                 if (response.isSuccessful) {
                     val bytes = response.body.bytes()
                     if (bytes[1].toInt() == 80) {
@@ -79,6 +78,8 @@ object ImageUtils {
                 }
             }
             result
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (e: Exception) {
             e.printStackTrace()
             null

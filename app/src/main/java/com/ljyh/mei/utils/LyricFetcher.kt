@@ -5,6 +5,10 @@ import com.google.gson.JsonObject
 import com.ljyh.mei.data.model.Lyric
 import com.ljyh.mei.di.NeteaseInterceptor
 import com.ljyh.mei.playback.DownloadWorker
+import com.ljyh.mei.playback.readDownloadResponse
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.FormBody
@@ -33,6 +37,7 @@ object LyricFetcher {
         val amll = fetchAMLL(songId)
         if (!amll.isNullOrBlank()) return@withContext amll
 
+        currentCoroutineContext().ensureActive()
         val netease = fetchNeteaseLyric(songId)
         val yrc = netease?.yrc?.lyric
         if (!yrc.isNullOrBlank()) return@withContext yrc
@@ -43,23 +48,25 @@ object LyricFetcher {
         null
     }
 
-    private fun fetchAMLL(songId: String): String? {
+    private suspend fun fetchAMLL(songId: String): String? {
         return try {
             val url = "https://amlldb.bikonoo.com/ncm-lyrics/$songId.ttml"
             val request = Request.Builder().url(url).build()
-            amllClient.newCall(request).execute().use { response ->
+            readDownloadResponse(amllClient, request) { response ->
                 if (response.isSuccessful) {
                     val body = response.body?.string()
                     if (!body.isNullOrBlank() && body != "歌词不存在") body else null
                 } else null
             }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (e: Exception) {
             Timber.tag("LyricFetcher").w(e, "AMLL fetch failed for $songId")
             null
         }
     }
 
-    private fun fetchNeteaseLyric(songId: String): Lyric? {
+    private suspend fun fetchNeteaseLyric(songId: String): Lyric? {
         return try {
             val body = FormBody.Builder()
                 .add("id", songId)
@@ -78,11 +85,13 @@ object LyricFetcher {
                 .post(body)
                 .build()
 
-            neteaseClient.newCall(request).execute().use { response ->
+            readDownloadResponse(neteaseClient, request) { response ->
                 if (response.isSuccessful) {
                     gson.fromJson(response.body?.string(), Lyric::class.java)
                 } else null
             }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (e: Exception) {
             Timber.tag("LyricFetcher").w(e, "Netease lyric fetch failed for $songId")
             null
