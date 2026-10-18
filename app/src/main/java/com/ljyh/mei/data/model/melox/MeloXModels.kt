@@ -92,6 +92,7 @@ data class CloudMusicPage(
     val usedSize: Long,
     val maxSize: Long,
     val hasMore: Boolean,
+    val nextOffset: Int = songs.size,
 )
 
 data class MessageContact(

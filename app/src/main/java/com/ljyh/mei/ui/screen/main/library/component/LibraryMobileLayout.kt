@@ -104,6 +104,7 @@ import com.ljyh.mei.ui.screen.main.library.LibraryCollectionState
 import com.ljyh.mei.ui.screen.main.library.LibraryPlaylistFilter
 import com.ljyh.mei.ui.screen.cloud.CloudMusicViewModel
 import com.ljyh.mei.ui.screen.cloud.CloudMusicUiState
+import com.ljyh.mei.ui.screen.cloud.CloudMusicPaginationFooter
 import com.ljyh.mei.ui.screen.history.HistoryViewModel
 import com.ljyh.mei.ui.screen.history.HistoryUiState
 import com.ljyh.mei.ui.screen.playlist.PlaylistViewModel
@@ -594,7 +595,7 @@ fun LibraryMobileLayout(
 
                         LibraryPage.Cloud -> {
                             cloudState?.let { state ->
-                                libraryCloudItems(state, playerConnection, query)
+                                libraryCloudItems(state, playerConnection, query) { cloudViewModel?.loadMore() }
                             }
                         }
 
@@ -1148,6 +1149,7 @@ private fun LazyListScope.libraryCloudItems(
     state: CloudMusicUiState,
     playerConnection: PlayerConnection?,
     query: String,
+    onLoadMore: () -> Unit,
 ) {
     val songs = state.page?.songs.orEmpty().filterIfSearching(query) { song ->
         song.name.containsQuery(query) ||
@@ -1201,6 +1203,11 @@ private fun LazyListScope.libraryCloudItems(
                     playerConnection?.playQueue(ListQueue("library-cloud", "Cloud", queue, index))
                 },
             )
+        }
+    }
+    if (state.page?.hasMore == true || state.isLoadingMore || state.loadMoreError != null) {
+        item(key = "library-cloud-pagination") {
+            CloudMusicPaginationFooter(state, onLoadMore)
         }
     }
 }

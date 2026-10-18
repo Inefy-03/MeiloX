@@ -753,16 +753,12 @@ class MeloXRepository @Inject constructor(
     }
 
     suspend fun cloudSongs(offset: Int = 0, limit: Int = 200): CloudMusicPage {
-        val response = request("/api/v1/cloud/get", mapOf("offset" to offset, "limit" to limit))
-        val songs = response.array("data").mapNotNull(::parseCloudSong)
-        val count = response.int("count") ?: songs.size
-        return CloudMusicPage(
-            songs = songs,
-            count = count,
-            usedSize = response.long("size") ?: 0,
-            maxSize = response.long("maxSize") ?: 0,
-            hasMore = response.boolean("hasMore") ?: (offset + songs.size < count),
+        require(offset >= 0) { "Cloud offset must not be negative" }
+        val response = request(
+            "/api/v1/cloud/get",
+            mapOf("offset" to offset, "limit" to limit.coerceIn(1, 200)),
         )
+        return parseCloudMusicPage(response, offset)
     }
 
     suspend fun deleteCloudSong(id: Long) {
@@ -1793,6 +1789,24 @@ private fun parseProgram(element: JsonElement?): PodcastProgram? {
         radioName = radio?.string("name") ?: "Podcast",
         host = value.objectOrNull("dj")?.let(::parseHost),
         mainSongId = value.objectOrNull("mainSong")?.long("id"),
+    )
+}
+
+internal fun parseCloudMusicPage(response: JsonObject, offset: Int): CloudMusicPage {
+    require(offset >= 0) { "Cloud offset must not be negative" }
+    val rows = response.get("data")?.takeIf(JsonElement::isJsonArray)?.asJsonArray
+        ?: error("NetEase did not return cloud songs")
+    val nextOffset = Math.addExact(offset, rows.size())
+    val count = response.int("count") ?: nextOffset
+    val hasMore = response.boolean("hasMore") ?: (nextOffset < count)
+    check(!hasMore || nextOffset > offset) { "Cloud pagination did not advance" }
+    return CloudMusicPage(
+        songs = rows.mapNotNull(::parseCloudSong),
+        count = count,
+        usedSize = response.long("size") ?: 0,
+        maxSize = response.long("maxSize") ?: 0,
+        hasMore = hasMore,
+        nextOffset = nextOffset,
     )
 }
 

@@ -68,12 +68,23 @@ data class CloudMusicUiState(
     val isUploading: Boolean = false,
     val uploadProgress: Float = 0f,
     val error: String? = null,
+    val isLoadingMore: Boolean = false,
+    val loadMoreError: String? = null,
 )
 
 @HiltViewModel
-class CloudMusicViewModel @Inject constructor(
-    private val repository: MeloXRepository,
+class CloudMusicViewModel internal constructor(
+    private val loadPage: suspend (Int) -> CloudMusicPage,
+    private val deleteSong: suspend (Long) -> Unit,
+    private val uploadSong: suspend (Uri, (Long, Long) -> Unit) -> Unit,
 ) : ViewModel() {
+    @Inject
+    constructor(repository: MeloXRepository) : this(
+        { offset -> repository.cloudSongs(offset = offset) },
+        repository::deleteCloudSong,
+        repository::uploadCloudSong,
+    )
+
     private val _state = MutableStateFlow(CloudMusicUiState())
     val state = _state.asStateFlow()
 
@@ -82,16 +93,30 @@ class CloudMusicViewModel @Inject constructor(
     fun refresh() {
         viewModelScope.launch {
             _state.value = _state.value.copy(isLoading = true, error = null)
-            runCatching { repository.cloudSongs() }
+            runCatching { loadPage(0) }
                 .onSuccess { _state.value = CloudMusicUiState(isLoading = false, page = it) }
                 .onFailure { _state.value = _state.value.copy(isLoading = false, error = it.message) }
+        }
+    }
+
+    fun loadMore() {
+        val current = _state.value
+        val page = current.page ?: return
+        if (current.isLoading || current.isLoadingMore || !page.hasMore) return
+        _state.value = current.copy(isLoadingMore = true, loadMoreError = null)
+        viewModelScope.launch {
+            runCatching { loadPage(page.nextOffset) }
+                .onSuccess { _state.value = _state.value.withCloudPage(it) }
+                .onFailure {
+                    _state.value = _state.value.copy(isLoadingMore = false, loadMoreError = it.message)
+                }
         }
     }
 
     fun delete(song: CloudSong) {
         viewModelScope.launch {
             _state.value = _state.value.copy(deletingIds = _state.value.deletingIds + song.id)
-            runCatching { repository.deleteCloudSong(song.id) }
+            runCatching { deleteSong(song.id) }
                 .onSuccess { refresh() }
                 .onFailure {
                     _state.value = _state.value.copy(
@@ -107,7 +132,7 @@ class CloudMusicViewModel @Inject constructor(
         viewModelScope.launch {
             _state.value = _state.value.copy(isUploading = true, uploadProgress = 0f, error = null)
             runCatching {
-                repository.uploadCloudSong(uri) { sent, total ->
+                uploadSong(uri) { sent, total ->
                     _state.value = _state.value.copy(uploadProgress = if (total > 0) sent.toFloat() / total else 0f)
                 }
             }.onSuccess {
@@ -247,7 +272,39 @@ fun CloudMusicScreen(
                 )
             }
         }
+        if (state.page?.hasMore == true || state.isLoadingMore || state.loadMoreError != null) {
+            item(key = "cloud-pagination") {
+                CloudMusicPaginationFooter(state, viewModel::loadMore)
+            }
+        }
     }
+}
+
+@Composable
+internal fun CloudMusicPaginationFooter(state: CloudMusicUiState, onLoadMore: () -> Unit) {
+    Column(
+        Modifier.fillMaxWidth().padding(vertical = 18.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        if (state.isLoadingMore) {
+            CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+        } else {
+            state.loadMoreError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            GlassButton(onClick = onLoadMore, enabled = !state.isLoading) {
+                Text(stringResource(if (state.loadMoreError != null) R.string.retry else R.string.library_load_more))
+            }
+        }
+    }
+}
+
+internal fun CloudMusicUiState.withCloudPage(incoming: CloudMusicPage): CloudMusicUiState {
+    val songs = (page?.songs.orEmpty() + incoming.songs).distinctBy(CloudSong::id)
+    return copy(
+        page = incoming.copy(songs = songs, count = maxOf(page?.count ?: 0, incoming.count, songs.size)),
+        isLoadingMore = false,
+        loadMoreError = null,
+    )
 }
 
 private fun CloudSong.asMediaMetadata() = MediaMetadata(

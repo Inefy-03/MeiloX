@@ -1,22 +1,37 @@
 package com.ljyh.mei.data.repository
 
 import android.util.Log
+import androidx.lifecycle.viewModelScope
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import com.ljyh.mei.AppContext
 import com.ljyh.mei.constants.CookieKey
 import com.ljyh.mei.data.network.Resource
+import com.ljyh.mei.data.network.NeteaseLoginSecurity
 import com.ljyh.mei.data.network.NeteaseSessionType
+import com.ljyh.mei.data.network.NeteaseUrsSmsLogin
 import com.ljyh.mei.data.network.neteaseSessionType
+import com.ljyh.mei.data.network.setNeteaseWebSession
+import androidx.datastore.preferences.core.edit
+import com.ljyh.mei.ui.screen.cloud.CloudMusicViewModel
 import com.ljyh.mei.di.RetrofitModule
 import com.ljyh.mei.utils.dataStore
+import java.io.File
 import java.io.IOException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import org.junit.Assume.assumeTrue
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -92,6 +107,118 @@ class CatalogReadsInstrumentedTest {
     }
 
     @Test
+    fun cloudPagesContinueBeyondTwoHundredSongsWithoutAccountWrites() = runBlocking<Unit> {
+        val context = AppContext.instance
+        val before = context.dataStore.data.first()
+        val argument = InstrumentationRegistry.getArguments().getString("cloudReadOnlyCredentialFile")
+        val credentialFile = argument?.takeIf(String::isNotBlank)?.let { name ->
+            val directory = context.filesDir.canonicalFile
+            val candidate = File(name).let { if (it.isAbsolute) it else File(directory, name) }.canonicalFile
+            check(candidate.path.startsWith(directory.path + File.separator)) {
+                "Cloud read-only credential must be a private app file"
+            }
+            candidate
+        }
+        val readOnly = readOnlyCatalogClient()
+        var viewModel: CloudMusicViewModel? = null
+        try {
+            if (credentialFile != null) {
+                assertEquals("Read-only account checks require no active downloads", 0,
+                    com.ljyh.mei.di.AppDatabase.getDatabase(context).downloadDao().activeCount().first())
+                val activityManager = context.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+                @Suppress("DEPRECATION")
+                check(activityManager.getRunningServices(Int.MAX_VALUE).none {
+                    it.service.packageName == context.packageName && it.service.className == "com.ljyh.mei.playback.MusicService"
+                }) { "Read-only account checks require the player service to be stopped" }
+                check(credentialFile.isFile && credentialFile.length() in 1..65_536) {
+                    "Cloud read-only credential file is unavailable"
+                }
+                val input = credentialFile.readText().trim()
+                val credential = if ("MUSIC_U=" in input) {
+                    input.split(';', '\n', '\r').firstOrNull { it.trim().startsWith("MUSIC_U=") }
+                        ?.trim()?.substringAfter("MUSIC_U=").orEmpty()
+                } else input
+                check(credential.isNotBlank() && credential.none { it.isWhitespace() || it == ';' }) {
+                    "Cloud read-only credential format is invalid"
+                }
+                context.dataStore.edit { it.setNeteaseWebSession(credential) }
+            } else {
+                assumeTrue("A signed-in account is required", before.neteaseSessionType() != NeteaseSessionType.None)
+            }
+            val sessionType = context.dataStore.data.first().neteaseSessionType()
+            val cloudEapi = RetrofitModule.provideMeloXEapiService(RetrofitModule.provideRetrofit(readOnly))
+            val cloudWeapi = RetrofitModule.provideMeloXWeapiService(RetrofitModule.provideWeApiRetrofit(readOnly))
+            val repository = MeloXRepository(
+                cloudEapi, cloudWeapi, context, readOnly,
+                NeteaseLoginSecurity(context, readOnly), NeteaseUrsSmsLogin(context, readOnly),
+            )
+            val offsets = mutableListOf<Int>()
+            val model = withContext(Dispatchers.Main) {
+                CloudMusicViewModel(
+                    loadPage = { offset ->
+                        offsets += offset
+                        repository.cloudSongs(offset = offset)
+                    },
+                    deleteSong = { error("Cloud deletion is forbidden in this read-only regression") },
+                    uploadSong = { _, _ -> error("Cloud upload is forbidden in this read-only regression") },
+                ).also { viewModel = it }
+            }
+            val firstState = withTimeout(60_000) { model.state.first { !it.isLoading } }
+            assertNull("Cloud first page failed", firstState.error)
+            val first = checkNotNull(firstState.page)
+            if (credentialFile == null) assumeTrue("The account must have more than 200 cloud songs", first.count > 200)
+            else assertTrue("The read-only account must have more than 200 cloud songs", first.count > 200)
+            assertTrue("The first request must stay bounded", first.songs.size in 1..200)
+            assertTrue("The first raw cursor must stay bounded", first.nextOffset in 1..200)
+            assertTrue("A continuation is required", first.hasMore)
+            assertEquals(listOf(0), offsets)
+
+            withContext(Dispatchers.Main) { model.loadMore() }
+            val appendedState = withTimeout(60_000) { model.state.first { !it.isLoadingMore } }
+            assertNull("Cloud continuation failed", appendedState.loadMoreError)
+            val appended = checkNotNull(appendedState.page)
+            assertEquals(listOf(0, first.nextOffset), offsets)
+            assertTrue("Cloud continuation must append beyond the first 200 songs", appended.songs.size > 200)
+            assertEquals(appended.songs.size, appended.songs.distinctBy { it.id }.size)
+            assertTrue("The raw cloud cursor must advance", appended.nextOffset > first.nextOffset)
+            assertTrue("Each continuation must stay bounded", appended.nextOffset - first.nextOffset <= 200)
+            if (credentialFile != null) {
+                assertEquals(NeteaseSessionType.Web, sessionType)
+                val search = SearchRepository(RetrofitModule.provideApiService(RetrofitModule.provideRetrofit(readOnly)))
+                    .search("HOYO", type = 1009, limit = 10)
+                assertTrue("Web-session podcast search failed", search is Resource.Success)
+                val radios = (search as Resource.Success).data.result.podcasts.orEmpty()
+                assertTrue("Web-session radio results must match HOYO",
+                    radios.take(5).any { it.name.contains("HOYO", ignoreCase = true) })
+            }
+            Log.i(
+                "CatalogReads",
+                "cloud pages=2 first=${first.songs.size} appended=${appended.songs.size} " +
+                    "rawOffset=${appended.nextOffset} session=${sessionType.name}",
+            )
+        } finally {
+            withContext(NonCancellable) {
+                withContext(Dispatchers.Main) {
+                    viewModel?.viewModelScope?.coroutineContext?.get(Job)?.cancelAndJoin()
+                }
+                try {
+                    context.dataStore.updateData { before }
+                    assertTrue(
+                        "The original complete preferences must be restored",
+                        before.asMap() == context.dataStore.data.first().asMap(),
+                    )
+                } finally {
+                    credentialFile?.let { file ->
+                        assertTrue("The private credential input must be removed", !file.exists() || file.delete())
+                    }
+                    readOnly.connectionPool.evictAll()
+                    readOnly.dispatcher.executorService.shutdown()
+                }
+            }
+        }
+    }
+
+    @Test
     fun podcastSearchUsesRelevantDesktopResultsWithoutReplacingTheMobileSession() = runBlocking<Unit> {
         val context = AppContext.instance
         val before = context.dataStore.data.first()
@@ -120,6 +247,7 @@ class CatalogReadsInstrumentedTest {
 
     private fun readOnlyCatalogClient(): OkHttpClient {
         val allowedPaths = setOf(
+            "/weapi/v1/cloud/get", "/eapi/v1/cloud/get",
             "/api/search/get", "/weapi/search/get", "/eapi/search/get",
         )
         val guard = Interceptor { chain ->
