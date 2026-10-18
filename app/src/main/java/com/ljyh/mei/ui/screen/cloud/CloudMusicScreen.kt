@@ -57,6 +57,11 @@ import com.ljyh.mei.ui.local.LocalPlayerConnection
 import com.ljyh.mei.ui.screen.main.library.component.groupedLazyItems
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -87,62 +92,140 @@ class CloudMusicViewModel internal constructor(
 
     private val _state = MutableStateFlow(CloudMusicUiState())
     val state = _state.asStateFlow()
+    private val lock = Any()
+    private var readRevision = 0L
+    private var readJob: Job? = null
+    private var uploadRevision = 0L
 
     init { refresh() }
 
     fun refresh() {
-        viewModelScope.launch {
-            _state.value = _state.value.copy(isLoading = true, error = null)
-            runCatching { loadPage(0) }
-                .onSuccess { _state.value = CloudMusicUiState(isLoading = false, page = it) }
-                .onFailure { _state.value = _state.value.copy(isLoading = false, error = it.message) }
+        val job = synchronized(lock) {
+            val expected = ++readRevision
+            readJob?.cancel()
+            _state.value = _state.value.copy(
+                isLoading = true,
+                isLoadingMore = false,
+                loadMoreError = null,
+                error = null,
+            )
+            viewModelScope.launch(start = CoroutineStart.LAZY) { readPage(expected, 0, append = false) }
+                .also { readJob = it }
         }
+        job.start()
     }
 
     fun loadMore() {
-        val current = _state.value
-        val page = current.page ?: return
-        if (current.isLoading || current.isLoadingMore || !page.hasMore) return
-        _state.value = current.copy(isLoadingMore = true, loadMoreError = null)
-        viewModelScope.launch {
-            runCatching { loadPage(page.nextOffset) }
-                .onSuccess { _state.value = _state.value.withCloudPage(it) }
-                .onFailure {
-                    _state.value = _state.value.copy(isLoadingMore = false, loadMoreError = it.message)
-                }
+        val job = synchronized(lock) {
+            val current = _state.value
+            val page = current.page ?: return
+            if (current.isLoading || current.isLoadingMore || !page.hasMore) return
+            val expected = ++readRevision
+            _state.value = current.copy(isLoadingMore = true, loadMoreError = null)
+            viewModelScope.launch(start = CoroutineStart.LAZY) {
+                readPage(expected, page.nextOffset, append = true)
+            }.also { readJob = it }
+        }
+        job.start()
+    }
+
+    private suspend fun readPage(expected: Long, offset: Int, append: Boolean) {
+        try {
+            val incoming = loadPage(offset)
+            currentCoroutineContext().ensureActive()
+            publishRead(expected) { current ->
+                if (append) current.withCloudPage(incoming)
+                else current.copy(
+                    isLoading = false,
+                    page = incoming.copy(songs = incoming.songs.distinctBy(CloudSong::id)),
+                )
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            publishRead(expected) { current ->
+                if (append) current.copy(isLoadingMore = false, loadMoreError = error.message)
+                else current.copy(isLoading = false, error = error.message)
+            }
+        } finally {
+            synchronized(lock) {
+                if (readRevision == expected) readJob = null
+            }
+        }
+    }
+
+    private fun publishRead(expected: Long, update: (CloudMusicUiState) -> CloudMusicUiState) {
+        synchronized(lock) {
+            if (readRevision == expected) _state.value = update(_state.value)
         }
     }
 
     fun delete(song: CloudSong) {
-        viewModelScope.launch {
+        val job = synchronized(lock) {
+            if (song.id in _state.value.deletingIds) return
             _state.value = _state.value.copy(deletingIds = _state.value.deletingIds + song.id)
-            runCatching { deleteSong(song.id) }
-                .onSuccess { refresh() }
-                .onFailure {
-                    _state.value = _state.value.copy(
-                        deletingIds = _state.value.deletingIds - song.id,
-                        error = it.message,
-                    )
+            viewModelScope.launch(start = CoroutineStart.LAZY) {
+                try {
+                    deleteSong(song.id)
+                    currentCoroutineContext().ensureActive()
+                    synchronized(lock) {
+                        val current = _state.value
+                        _state.value = current.copy(page = current.page?.let { page ->
+                            page.copy(songs = page.songs.filterNot { it.id == song.id })
+                        })
+                    }
+                    refresh()
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    synchronized(lock) { _state.value = _state.value.copy(error = error.message) }
+                } finally {
+                    synchronized(lock) {
+                        _state.value = _state.value.copy(deletingIds = _state.value.deletingIds - song.id)
+                    }
                 }
+            }
         }
+        job.start()
     }
 
-    fun upload(uri: Uri) {
-        if (_state.value.isUploading) return
-        viewModelScope.launch {
+    fun upload(uri: Uri) = upload { progress -> uploadSong(uri, progress) }
+
+    internal fun upload(operation: suspend ((Long, Long) -> Unit) -> Unit) {
+        val job = synchronized(lock) {
+            if (_state.value.isUploading) return
+            val expected = ++uploadRevision
             _state.value = _state.value.copy(isUploading = true, uploadProgress = 0f, error = null)
-            runCatching {
-                uploadSong(uri) { sent, total ->
-                    _state.value = _state.value.copy(uploadProgress = if (total > 0) sent.toFloat() / total else 0f)
+            viewModelScope.launch(start = CoroutineStart.LAZY) {
+                try {
+                    operation { sent, total ->
+                        publishUpload(expected) {
+                            it.copy(uploadProgress = if (total > 0) (sent.toFloat() / total).coerceIn(0f, 1f) else 0f)
+                        }
+                    }
+                    currentCoroutineContext().ensureActive()
+                    publishUpload(expected) { it.copy(isUploading = false, uploadProgress = 1f) }
+                    refresh()
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    publishUpload(expected) { it.copy(error = error.message) }
+                } finally {
+                    publishUpload(expected) { it.copy(isUploading = false) }
                 }
-            }.onSuccess {
-                _state.value = _state.value.copy(isUploading = false, uploadProgress = 1f)
-                refresh()
-            }.onFailure {
-                _state.value = _state.value.copy(isUploading = false, error = it.message)
+            }
+        }
+        job.start()
+    }
+
+    private fun publishUpload(expected: Long, update: (CloudMusicUiState) -> CloudMusicUiState) {
+        synchronized(lock) {
+            if (uploadRevision == expected && _state.value.isUploading) {
+                _state.value = update(_state.value)
             }
         }
     }
+
 }
 
 @Composable

@@ -2,6 +2,7 @@ package com.ljyh.mei.data.repository
 
 import android.net.Uri
 import android.os.Bundle
+import androidx.lifecycle.viewModelScope
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.Closeable
@@ -12,12 +13,20 @@ import java.net.Socket
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import com.ljyh.mei.data.model.melox.CloudMusicPage
+import com.ljyh.mei.data.model.melox.CloudSong
+import com.ljyh.mei.ui.screen.cloud.CloudMusicViewModel
 import kotlin.concurrent.thread
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
@@ -43,6 +52,69 @@ class CloudUploadInstrumentedTest {
     private val context = instrumentation.targetContext
     private val resolver = context.contentResolver
     private val authority = "${instrumentation.context.packageName}.cloud-upload-fixture"
+
+    @Test
+    fun refreshPreservesPendingCloudUploadAndDeletionWithoutAccountWrites() = runBlocking {
+        val deletion = CompletableDeferred<Unit>()
+        val upload = CompletableDeferred<Unit>()
+        val deleteCalls = AtomicInteger()
+        val uploadCalls = AtomicInteger()
+        val reads = AtomicInteger()
+        lateinit var progress: (Long, Long) -> Unit
+        val song = CloudSong(1, "Fixture song", "Artist", "Album", null, 1_000, 42, 320, 0)
+        val model = withContext(Dispatchers.Main) {
+            CloudMusicViewModel(
+                loadPage = {
+                    reads.incrementAndGet()
+                    CloudMusicPage(listOf(song), 1, 42, 99, false)
+                },
+                deleteSong = {
+                    deleteCalls.incrementAndGet()
+                    deletion.await()
+                },
+                uploadSong = { _, _ -> error("This state regression must not invoke a repository upload") },
+            )
+        }
+        try {
+            withTimeout(5_000) { model.state.first { !it.isLoading } }
+            withContext(Dispatchers.Main) {
+                model.delete(song)
+                model.delete(song)
+                model.upload { callback ->
+                    uploadCalls.incrementAndGet()
+                    progress = callback
+                    callback(40, 100)
+                    upload.await()
+                }
+                model.upload { error("The duplicate upload must be ignored") }
+                model.refresh()
+            }
+            val refreshed = withTimeout(5_000) { model.state.first { !it.isLoading } }
+            assertEquals(1, deleteCalls.get())
+            assertEquals(1, uploadCalls.get())
+            assertTrue(reads.get() >= 2)
+            assertTrue(refreshed.isUploading)
+            assertEquals(0.4f, refreshed.uploadProgress)
+            assertEquals(setOf(1L), refreshed.deletingIds)
+
+            withContext(Dispatchers.IO) { progress(70, 100) }
+            assertEquals(0.7f, model.state.value.uploadProgress)
+            deletion.complete(Unit)
+            upload.complete(Unit)
+            val completed = withTimeout(5_000) {
+                model.state.first { !it.isLoading && !it.isUploading && it.deletingIds.isEmpty() }
+            }
+            assertFalse(completed.isUploading)
+            assertTrue(completed.deletingIds.isEmpty())
+            assertEquals(1f, completed.uploadProgress)
+            withContext(Dispatchers.IO) { progress(20, 100) }
+            assertEquals(1f, model.state.value.uploadProgress)
+        } finally {
+            withContext(NonCancellable + Dispatchers.Main) {
+                model.viewModelScope.coroutineContext[Job]?.cancelAndJoin()
+            }
+        }
+    }
 
     @Test
     fun snapshotUsesActualBytesOnceAndSurvivesProviderMutation() = runBlocking {
