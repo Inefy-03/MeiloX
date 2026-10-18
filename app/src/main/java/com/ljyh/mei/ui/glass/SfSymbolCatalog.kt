@@ -216,6 +216,8 @@ internal object SfSymbolCatalog {
         "target" to 0x10088A,
         "text.badge.plus" to 0x1002F8,
         "text.line.first.and.arrowtriangle.forward" to 0x10163F,
+        "text.rectangle" to 0x103435,
+        "text.rectangle.fill" to 0x103436,
         "textformat.size" to 0x100150,
         "textformat.size.larger" to 0x100D7F,
         "timer" to 0x100431,

@@ -220,44 +220,7 @@ class PlayerConnection(
         if (!player.playWhenReady) player.playWhenReady = true
     }
 
-    /**
-     * 切换播放模式
-     * 逻辑：列表循环 (REPEAT_ALL) -> 随机播放 (SHUFFLE) -> 单曲循环 (REPEAT_ONE) -> ...
-     */
-    fun switchPlayMode() {
-        // 基于当前的 UI 状态决定下一步
-        // 注意：这里不需要返回 Int，因为操作完 Player 后，ExoPlayer 会回调 Listener，
-        // Listener 会调用 updatePlayModeState() 更新 repeatMode Flow，
-        // UI 观察 Flow 自动变化。这样才可靠。
-
-        val currentUiMode = PlayMode.fromInt(repeatMode.value) ?: PlayMode.REPEAT_MODE_ALL
-
-        // 判断用户是否开启了“列表循环”设置
-        // 如果开启：列表模式 = REPEAT_MODE_ALL
-        // 如果关闭：列表模式 = REPEAT_MODE_OFF (播完停止)
-        val shouldLoopAll = service.dataStore[LoopPlaybackKey] == true
-
-        when (currentUiMode) {
-            PlayMode.REPEAT_MODE_ALL -> {
-                // 当前是列表 -> 切换到 随机
-                // 行为：开启随机，且通常随机模式下也是列表循环的
-                service.setShuffleModeEnabled(true)
-                player.repeatMode = if (shouldLoopAll) REPEAT_MODE_ALL else REPEAT_MODE_OFF
-            }
-            PlayMode.SHUFFLE_MODE_ALL -> {
-                // 当前是随机 -> 切换到 单曲
-                // 行为：关闭随机，开启单曲循环
-                service.setShuffleModeEnabled(false)
-                player.repeatMode = REPEAT_MODE_ONE
-            }
-            PlayMode.REPEAT_MODE_ONE -> {
-                // 当前是单曲 -> 切换到 列表
-                // 行为：关闭随机，开启列表循环(或不循环)
-                service.setShuffleModeEnabled(false)
-                player.repeatMode = if (shouldLoopAll) REPEAT_MODE_ALL else REPEAT_MODE_OFF
-            }
-        }
-    }
+    fun switchPlayMode() = service.switchPlayMode()
 
 
     // --- Listeners ---

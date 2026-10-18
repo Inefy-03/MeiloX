@@ -21,11 +21,15 @@ import com.ljyh.mei.data.network.safeApiCall
 import android.util.Base64
 import com.ljyh.mei.data.model.api.CheckSongLike
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okio.IOException
-import timber.log.Timber
 import java.util.concurrent.TimeUnit
 
 class PlayerRepository(
@@ -33,6 +37,19 @@ class PlayerRepository(
     private val apiService: ApiService,
     private val weApiService: WeApiService
 ) {
+    private val likeMutex = Mutex()
+    private val likeStateLock = Any()
+    private var likeGeneration = 0L
+    private val _songLikes = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+    val songLikes: StateFlow<Map<String, Boolean>> = _songLikes.asStateFlow()
+
+    fun resetLikeState() {
+        synchronized(likeStateLock) {
+            likeGeneration++
+            _songLikes.value = emptyMap()
+        }
+    }
+
 
     suspend fun searchNew(keyword: String): Resource<SearchResult> {
         return withContext(Dispatchers.IO) {
@@ -133,13 +150,37 @@ class PlayerRepository(
     }
 
 
-    suspend fun like(id: String, like: Boolean) {
-        apiService.like(
-            Like(
-                trackId = id,
-                like = like
-            )
-        )
+    suspend fun toggleLike(id: String, expectedSession: String): Resource<Boolean> {
+        if (expectedSession.isBlank()) return Resource.Error("An authenticated session is required")
+        val songId = id.toLongOrNull()?.takeIf { it > 0 }
+            ?: return Resource.Error("Invalid song ID")
+        val key = songId.toString()
+        val generation = synchronized(likeStateLock) { likeGeneration }
+        return withContext(Dispatchers.IO) {
+            likeMutex.withLock {
+                if (!isLikeGenerationCurrent(generation)) return@withLock accountChangedLikeResult()
+                val current = _songLikes.value[key] ?: when (val status = fetchSongLike(songId, expectedSession)) {
+                    is Resource.Success -> {
+                        if (!publishSongLike(key, status.data, generation)) {
+                            return@withLock accountChangedLikeResult()
+                        }
+                        status.data
+                    }
+                    is Resource.Error -> return@withLock status
+                    Resource.Loading -> return@withLock Resource.Loading
+                }
+                if (!isLikeGenerationCurrent(generation)) return@withLock accountChangedLikeResult()
+                val result = safeApiCall {
+                    val response = apiService.like(Like(trackId = key, like = !current), expectedSession)
+                    check(response.code == 200) { "Unable to update song like (${response.code})" }
+                    !current
+                }
+                if (result is Resource.Success && !publishSongLike(key, result.data, generation)) {
+                    return@withLock accountChangedLikeResult()
+                }
+                result
+            }
+        }
     }
 
     private val amllClient = OkHttpClient.Builder()
@@ -209,14 +250,37 @@ class PlayerRepository(
         }
     }
 
-    suspend fun checkSongLike(id: Long): Resource<Boolean>{
-        return withContext(Dispatchers.IO){
-            safeApiCall {
-                val result = apiService.checkSongLike(CheckSongLike("[${id}]"))
-                Timber.tag("Player Repo").d(result.toString())
-                result.ids.contains(id)
+    suspend fun checkSongLike(id: Long, expectedSession: String? = null): Resource<Boolean> {
+        if (id <= 0) return Resource.Error("Invalid song ID")
+        val generation = synchronized(likeStateLock) { likeGeneration }
+        return withContext(Dispatchers.IO) {
+            likeMutex.withLock {
+                if (!isLikeGenerationCurrent(generation)) return@withLock accountChangedLikeResult()
+                val result = fetchSongLike(id, expectedSession)
+                if (result is Resource.Success && !publishSongLike(id.toString(), result.data, generation)) {
+                    return@withLock accountChangedLikeResult()
+                }
+                result
             }
         }
     }
+
+    private suspend fun fetchSongLike(id: Long, expectedSession: String?): Resource<Boolean> = safeApiCall {
+        val result = apiService.checkSongLike(CheckSongLike("[$id]"), expectedSession)
+        check(result.code == 200) { "Unable to load song like (${result.code})" }
+        result.ids.contains(id)
+    }
+
+    private fun isLikeGenerationCurrent(generation: Long): Boolean =
+        synchronized(likeStateLock) { likeGeneration == generation }
+
+    private fun publishSongLike(id: String, liked: Boolean, generation: Long): Boolean =
+        synchronized(likeStateLock) {
+            if (likeGeneration != generation) return@synchronized false
+            _songLikes.value = _songLikes.value + (id to liked)
+            true
+        }
+
+    private fun accountChangedLikeResult() = Resource.Error("Account changed")
 
 }

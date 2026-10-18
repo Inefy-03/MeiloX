@@ -46,6 +46,7 @@ import com.ljyh.mei.data.model.api.SubscribePlaylist
 import com.ljyh.mei.data.model.weapi.Comment
 import com.ljyh.mei.data.model.weapi.Like
 import com.ljyh.mei.data.model.weapi.LikeResult
+import com.ljyh.mei.data.network.NETEASE_EXPECTED_SESSION_HEADER
 import retrofit2.http.Body
 import retrofit2.http.Header
 import retrofit2.http.Headers
@@ -104,7 +105,10 @@ interface ApiService {
     ): UserPlaylist
 
     @POST("/api/song/like/check")
-    suspend fun checkSongLike(@Body body: CheckSongLike): CheckSongLikeResult
+    suspend fun checkSongLike(
+        @Body body: CheckSongLike,
+        @Header(NETEASE_EXPECTED_SESSION_HEADER) expectedSession: String? = null,
+    ): CheckSongLikeResult
 
     @POST("/api/album/sublist")
     suspend fun getCollectAlbumList(@Body body: GetAlbumList): UserAlbumList
@@ -139,7 +143,10 @@ interface ApiService {
     suspend fun getUserPhotoAlbum(@Body body: GetUserPhotoAlbum): AlbumPhoto
 
     @POST("/api/radio/like")
-    suspend fun like(@Body body: Like): LikeResult
+    suspend fun like(
+        @Body body: Like,
+        @Header(NETEASE_EXPECTED_SESSION_HEADER) expectedSession: String? = null,
+    ): LikeResult
 
     @POST("/api/playlist/manipulate/tracks")
     suspend fun manipulateTracks(@Body body: ManipulateTrack): ManipulateTrackResult

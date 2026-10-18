@@ -6,6 +6,7 @@ import androidx.datastore.dataStore
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ljyh.mei.AppContext
+import com.ljyh.mei.constants.CookieKey
 import com.ljyh.mei.constants.DownloadPathKey
 import com.ljyh.mei.constants.DownloadQualityKey
 import com.ljyh.mei.constants.MusicQuality
@@ -21,6 +22,7 @@ import com.ljyh.mei.data.model.room.Playlist
 import com.ljyh.mei.data.model.room.QQSong
 import com.ljyh.mei.data.model.weapi.Radio
 import com.ljyh.mei.data.network.Resource
+import com.ljyh.mei.data.network.neteaseSessionFingerprint
 import com.ljyh.mei.data.repository.PlayerRepository
 import com.ljyh.mei.data.repository.PlaylistRepository
 import com.ljyh.mei.data.repository.UserRepository
@@ -72,6 +74,17 @@ class PlayerViewModel @Inject constructor(
 
     private val _like = MutableStateFlow<Resource<Boolean>>(Resource.Loading)
     val like: StateFlow<Resource<Boolean>> = _like
+    private var selectedLikeId: String? = null
+    private var likeSelectionGeneration = 0L
+    private var likeStatusJob: Job? = null
+
+    init {
+        viewModelScope.launch {
+            repository.songLikes.collect { likes ->
+                _like.value = likes[selectedLikeId]?.let { Resource.Success(it) } ?: Resource.Loading
+            }
+        }
+    }
 
     private val _networkPlaylistsState = MutableStateFlow<Resource<UserPlaylist>>(Resource.Loading)
     val networkPlaylistsState: StateFlow<Resource<UserPlaylist>> = _networkPlaylistsState
@@ -114,23 +127,27 @@ class PlayerViewModel @Inject constructor(
             initialValue = emptyList()
         )
 
-    // 获取点赞状态
     fun getLike(id: Long) {
-        viewModelScope.launch {
-            Timber.tag("PlayerViewModel").d("get like $id")
-            _like.value = repository.checkSongLike(id)
+        val expectedSession = neteaseSessionFingerprint(AppContext.instance.dataStore[CookieKey].orEmpty())
+        val key = id.toString()
+        selectedLikeId = key
+        val generation = ++likeSelectionGeneration
+        _like.value = repository.songLikes.value[key]?.let { Resource.Success(it) } ?: Resource.Loading
+        likeStatusJob?.cancel()
+        likeStatusJob = viewModelScope.launch {
+            val result = repository.checkSongLike(id, expectedSession)
+            if (selectedLikeId == key && likeSelectionGeneration == generation) {
+                _like.value = repository.songLikes.value[key]?.let { Resource.Success(it) } ?: result
+            }
         }
     }
 
-    // 切换点赞状态
     fun like(id: String) {
+        val expectedSession = neteaseSessionFingerprint(AppContext.instance.dataStore[CookieKey].orEmpty())
         viewModelScope.launch {
-            try {
-                val currentLiked = (_like.value as? Resource.Success)?.data == true
-                repository.like(id, !currentLiked)
-                _like.value = Resource.Success(!currentLiked)
-            } catch (e: Exception) {
-                e.printStackTrace()
+            val result = repository.toggleLike(id, expectedSession)
+            if (result is Resource.Error) {
+                Timber.tag("PlayerViewModel").w("Unable to toggle song like: %s", result.message)
             }
         }
     }

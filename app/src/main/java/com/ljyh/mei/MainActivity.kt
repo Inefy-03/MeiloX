@@ -165,6 +165,10 @@ import com.ljyh.mei.ui.component.VersionUpdateAlert
 import com.ljyh.mei.ui.component.player.BottomSheetPlayer
 import com.ljyh.mei.ui.component.player.FloatingLyricsPipBackdrop
 import com.ljyh.mei.ui.component.player.FloatingLyricsPipScreen
+import com.ljyh.mei.ui.component.player.floatingLyricsPipParams
+import com.ljyh.mei.playback.ENABLE_FLOATING_LYRICS
+import com.ljyh.mei.playback.DISABLE_FLOATING_LYRICS
+import androidx.lifecycle.Lifecycle
 import com.ljyh.mei.ui.component.sheet.rememberBottomSheetState
 import com.ljyh.mei.ui.component.sheet.BottomSheetState
 import com.ljyh.mei.ui.component.utils.appBarScrollBehavior
@@ -242,6 +246,8 @@ class MainActivity : ComponentActivity() {
     lateinit var apiService: ApiService
     private var userData by mutableStateOf(UserData.VISITOR)
     private var pictureInPictureMode by mutableStateOf(false)
+    private var floatingLyricsRequest: Boolean? = null
+    private var musicService: MusicService? = null
 
 
     @androidx.annotation.OptIn(UnstableApi::class)
@@ -249,6 +255,8 @@ class MainActivity : ComponentActivity() {
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        pictureInPictureMode = isInPictureInPictureMode
+        readFloatingLyricsIntent(intent)
         enableEdgeToEdge()
         CrashHandler.init(this)
         if (BuildConfig.DEBUG) {
@@ -348,6 +356,9 @@ class MainActivity : ComponentActivity() {
                     override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
                         Timber.tag("MainActivity").d("Service Connected") // 添加日志
                         if (service is MusicService.MusicBinder) {
+                            musicService = service.service
+                            service.service.attachFloatingLyricsActivity(this@MainActivity)
+                            applyFloatingLyricsRequest()
                             // 更新 State，触发 Recomposition
                             playerConnection = PlayerConnection(
                                 context,
@@ -359,6 +370,8 @@ class MainActivity : ComponentActivity() {
                     }
 
                     override fun onServiceDisconnected(name: ComponentName?) {
+                        musicService?.detachFloatingLyricsActivity(this@MainActivity)
+                        musicService = null
                         Timber.tag("MainActivity").d("Service Disconnected")
                         playerConnection?.dispose() // 假设你有 dispose 方法清理资源
                         playerConnection = null
@@ -1161,17 +1174,53 @@ class MainActivity : ComponentActivity() {
     }
     }
 
-    override fun onStart() {
-        super.onStart()
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        readFloatingLyricsIntent(intent)
+        applyFloatingLyricsRequest()
     }
+
+    override fun onPostResume() {
+        super.onPostResume()
+        applyFloatingLyricsRequest()
+    }
+
+    private fun readFloatingLyricsIntent(intent: Intent?) {
+        floatingLyricsRequest = when (intent?.action) {
+            ENABLE_FLOATING_LYRICS -> true
+            DISABLE_FLOATING_LYRICS -> false
+            else -> return
+        }
+        intent.action = null
+    }
+
+    private fun applyFloatingLyricsRequest() {
+        if (floatingLyricsRequest == null) return
+        window.decorView.post {
+            if (isFinishing || isDestroyed || !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return@post
+            val enabled = floatingLyricsRequest ?: return@post
+            val service = musicService ?: return@post
+            floatingLyricsRequest = null
+            if (enabled && !isInPictureInPictureMode) {
+                enterPictureInPictureMode(floatingLyricsPipParams(this, service.player.isPlaying))
+            } else if (!enabled) {
+                moveTaskToBack(true)
+            }
+        }
+    }
+
     override fun onPictureInPictureModeChanged(
         isInPictureInPictureMode: Boolean,
         newConfig: Configuration,
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         pictureInPictureMode = isInPictureInPictureMode
+        musicService?.updateFloatingLyricsState(this)
     }
     override fun onDestroy() {
+        musicService?.detachFloatingLyricsActivity(this)
+        musicService = null
         super.onDestroy()
     }
 

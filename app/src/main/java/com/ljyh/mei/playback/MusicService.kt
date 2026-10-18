@@ -1,6 +1,10 @@
 package com.ljyh.mei.playback
 
 import android.app.PendingIntent
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -8,6 +12,7 @@ import android.media.audiofx.AudioEffect
 import android.net.ConnectivityManager
 import android.net.Uri
 import android.os.Binder
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -48,16 +53,30 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.preload.DefaultPreloadManager
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
-import androidx.media3.session.DefaultMediaNotificationProvider
+import androidx.media3.session.MediaConstants
+import androidx.media3.session.CommandButton
+import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionResult
 import androidx.media3.session.MediaController
 import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaSession
 import androidx.media3.session.SessionToken
 import coil3.ImageLoader
 import com.google.common.util.concurrent.MoreExecutors
+import com.google.common.util.concurrent.Futures
+import com.google.common.util.concurrent.ListenableFuture
+import com.google.common.util.concurrent.SettableFuture
 import com.ljyh.mei.MainActivity
+import com.ljyh.mei.ui.component.player.floatingLyricsPipParams
+import com.ljyh.mei.ui.component.player.hasFloatingLyricsBackgroundPermission
+import androidx.lifecycle.Lifecycle
 import com.ljyh.mei.R
 import com.ljyh.mei.constants.IsShuffleModeKey
+import com.ljyh.mei.constants.LoopPlaybackKey
+import com.ljyh.mei.constants.NotificationAction
+import com.ljyh.mei.constants.NotificationLeftActionKey
+import com.ljyh.mei.constants.NotificationRightActionKey
+import com.ljyh.mei.constants.UserIdKey
 import com.ljyh.mei.constants.CloudShuffleEnabledKey
 import com.ljyh.mei.constants.CookieKey
 import com.ljyh.mei.constants.MusicQuality
@@ -70,6 +89,9 @@ import com.ljyh.mei.data.model.metadata
 import com.ljyh.mei.data.network.netease.NcblSongInfo
 import com.ljyh.mei.data.network.netease.NeteaseClientLogClient
 import com.ljyh.mei.data.repository.MeloXRepository
+import com.ljyh.mei.data.repository.PlayerRepository
+import com.ljyh.mei.data.network.Resource
+import com.ljyh.mei.data.network.neteaseSessionFingerprint
 import com.ljyh.mei.data.model.api.GetSongUrlV1
 import com.ljyh.mei.data.model.room.Song
 import com.ljyh.mei.data.network.api.ApiService
@@ -107,6 +129,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import timber.log.Timber
 import java.io.File
+import java.lang.ref.WeakReference
 import java.util.Locale.getDefault
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -129,6 +152,17 @@ class MusicService : MediaLibraryService(),
     private lateinit var equalizerConfigurationState: EqualizerConfigurationState
     val context = this
     private lateinit var mediaSession: MediaLibrarySession
+    private var notificationLeftAction = NotificationAction.PlayMode
+    private var notificationRightAction = NotificationAction.Like
+    private var notificationSignedIn = false
+    private var notificationAccount: Pair<String?, String?>? = null
+    private var notificationLikeJob: Job? = null
+    private var notificationButtons: List<CommandButton> = emptyList()
+    private var floatingLyricsActivity = WeakReference<MainActivity>(null)
+    private var floatingLyricsEnabled = false
+
+    @Inject
+    lateinit var playerRepository: PlayerRepository
 
     lateinit var sleepTimer: SleepTimer
     lateinit var sleepTimerNotification: SleepTimerNotification
@@ -245,12 +279,7 @@ class MusicService : MediaLibraryService(),
 
 
         setMediaNotificationProvider(
-            DefaultMediaNotificationProvider(
-                this,
-                { NOTIFICATION_ID },
-                CHANNEL_ID,
-                R.string.app_name_en
-            )
+            PlaybackNotificationProvider(this, NOTIFICATION_ID, CHANNEL_ID)
         )
 
         val playbackAudioAttributes = AudioAttributes.Builder()
@@ -378,6 +407,10 @@ class MusicService : MediaLibraryService(),
         listenTogetherStore.attachPlayer(player)
         val singletonImageLoader = ImageLoader(this)
         mediaSession = MediaLibrarySession.Builder(this, player, LibrarySessionCallback())
+            .setSessionExtras(Bundle().apply {
+                putBoolean(MediaConstants.EXTRAS_KEY_SLOT_RESERVATION_SEEK_TO_PREV, true)
+                putBoolean(MediaConstants.EXTRAS_KEY_SLOT_RESERVATION_SEEK_TO_NEXT, true)
+            })
             .setSessionActivity(
                 PendingIntent.getActivity(
                     this,
@@ -390,6 +423,29 @@ class MusicService : MediaLibraryService(),
             .build()
 
 
+        scope.launch {
+            context.dataStore.data.map { preferences ->
+                Triple(
+                    NotificationAction.fromPreference(preferences[NotificationLeftActionKey], NotificationAction.PlayMode),
+                    NotificationAction.fromPreference(preferences[NotificationRightActionKey], NotificationAction.Like),
+                    preferences[CookieKey] to preferences[UserIdKey],
+                )
+            }.distinctUntilChanged().collect { (left, right, account) ->
+                notificationLeftAction = left
+                notificationRightAction = right
+                val accountChanged = notificationAccount != account
+                if (accountChanged) {
+                    notificationAccount = account
+                    playerRepository.resetLikeState()
+                }
+                notificationSignedIn = !account.first.isNullOrBlank() && !account.second.isNullOrBlank()
+                refreshNotificationLike(force = accountChanged)
+                updateNotificationButtons()
+            }
+        }
+        scope.launch {
+            playerRepository.songLikes.collect { updateNotificationButtons() }
+        }
         systemLyricsBridge = SystemLyricsBridge(this, player, lyricManager, mediaSession)
         scope.launch {
             context.dataStore.data.map { it[CookieKey] }.distinctUntilChanged().drop(1).collect {
@@ -695,6 +751,13 @@ class MusicService : MediaLibraryService(),
     }
 
     override fun onEvents(player: Player, events: Player.Events) {
+        if (events.containsAny(Player.EVENT_REPEAT_MODE_CHANGED, Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED,
+                Player.EVENT_MEDIA_ITEM_TRANSITION, Player.EVENT_MEDIA_METADATA_CHANGED)) {
+            updateNotificationButtons()
+        }
+        if (events.containsAny(Player.EVENT_MEDIA_ITEM_TRANSITION, Player.EVENT_MEDIA_METADATA_CHANGED)) {
+            refreshNotificationLike()
+        }
         // Playback state changes only maintain the audio-effect session. They are not
         // playback intent and must not restart the 500ms volume animations.
         if (events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED) ||
@@ -833,7 +896,198 @@ class MusicService : MediaLibraryService(),
     }
 
 
-    class LibrarySessionCallback : MediaLibrarySession.Callback
+    private fun notificationLikeSongId(): String? {
+        val metadata = player.currentMetadata ?: return null
+        return player.currentMediaItem?.mediaId?.takeIf {
+            !metadata.isLocal && !metadata.isPodcast && (it.toLongOrNull() ?: 0L) > 0L
+        }
+    }
+
+    private fun refreshNotificationLike(force: Boolean = false) {
+        notificationLikeJob?.cancel()
+        val id = notificationLikeSongId()?.toLongOrNull() ?: return
+        if (!notificationSignedIn ||
+            (!force && notificationLeftAction != NotificationAction.Like && notificationRightAction != NotificationAction.Like)
+        ) return
+        val expectedSession = notificationAccount?.first?.let(::neteaseSessionFingerprint) ?: return
+        notificationLikeJob = scope.launch { playerRepository.checkSongLike(id, expectedSession) }
+    }
+
+    fun attachFloatingLyricsActivity(activity: MainActivity) {
+        floatingLyricsActivity = WeakReference(activity)
+        NotificationManagerCompat.from(this).cancel(FLOATING_LYRICS_NOTIFICATION_ID)
+        updateFloatingLyricsState(activity)
+    }
+
+    fun detachFloatingLyricsActivity(activity: MainActivity) {
+        if (floatingLyricsActivity.get() !== activity) return
+        floatingLyricsActivity.clear()
+        floatingLyricsEnabled = false
+        updateNotificationButtons()
+    }
+
+    fun updateFloatingLyricsState(activity: MainActivity) {
+        if (floatingLyricsActivity.get() !== activity) return
+        floatingLyricsEnabled = activity.isInPictureInPictureMode
+        if (floatingLyricsEnabled) NotificationManagerCompat.from(this).cancel(FLOATING_LYRICS_NOTIFICATION_ID)
+        updateNotificationButtons()
+    }
+
+    private fun toggleFloatingLyrics(): Boolean {
+        val activity = floatingLyricsActivity.get()
+        if (activity?.isInPictureInPictureMode == true) return activity.moveTaskToBack(true)
+        if (activity != null && activity.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            return activity.enterPictureInPictureMode(floatingLyricsPipParams(activity, player.isPlaying))
+        }
+        if (hasFloatingLyricsBackgroundPermission(this)) {
+            try {
+                startActivity(floatingLyricsIntent(this, true))
+                return true
+            } catch (error: Exception) {
+                Timber.w(error, "Unable to open floating lyrics from the background")
+            }
+        }
+        val manager = NotificationManagerCompat.from(this)
+        if (!manager.areNotificationsEnabled()) {
+            Toast.makeText(this, R.string.notification_floating_lyrics_open_app, Toast.LENGTH_LONG).show()
+            return false
+        }
+        manager.createNotificationChannel(NotificationChannel(
+            "floating_lyrics", getString(R.string.more_action_floating_lyrics), NotificationManager.IMPORTANCE_DEFAULT,
+        ).apply {
+            setSound(null, null)
+            enableVibration(false)
+        })
+        // System media commands cannot launch an activity from the background. Let System UI
+        // send the activity PendingIntent directly when the user taps this short-lived entry.
+        val notification = NotificationCompat.Builder(this, "floating_lyrics")
+            .setSmallIcon(R.drawable.ic_notification_sf_text_rectangle)
+            .setContentTitle(getString(R.string.notification_enable_floating_lyrics))
+            .setContentText(getString(R.string.notification_floating_lyrics_open_hint))
+            .setContentIntent(floatingLyricsPendingIntent(this, true))
+            .setAutoCancel(true)
+            .setSilent(true)
+            .setTimeoutAfter(15_000L)
+            .build()
+        return try {
+            manager.notify(FLOATING_LYRICS_NOTIFICATION_ID, notification)
+            true
+        } catch (error: SecurityException) {
+            Toast.makeText(this, R.string.notification_floating_lyrics_open_app, Toast.LENGTH_LONG).show()
+            false
+        }
+    }
+
+    private fun updateNotificationButtons() {
+        if (!::mediaSession.isInitialized) return
+        val songId = notificationLikeSongId()
+        val liked = playerRepository.songLikes.value[songId] == true
+        val buttons = listOfNotNull(
+            notificationButton(
+                this, notificationLeftAction, true, player.repeatMode, player.shuffleModeEnabled, liked,
+                if (notificationLeftAction == NotificationAction.Like) songId != null && notificationSignedIn
+                else player.currentMediaItem != null,
+                floatingLyricsEnabled = floatingLyricsEnabled,
+            ),
+            notificationButton(
+                this, notificationRightAction, false, player.repeatMode, player.shuffleModeEnabled, liked,
+                if (notificationRightAction == NotificationAction.Like) songId != null && notificationSignedIn
+                else player.currentMediaItem != null,
+                floatingLyricsEnabled = floatingLyricsEnabled,
+            ),
+        )
+        if (buttons != notificationButtons) {
+            notificationButtons = buttons
+            mediaSession.setMediaButtonPreferences(buttons)
+        }
+    }
+
+    /** Shares the same mode cycle between the player UI and system media controls. */
+    fun switchPlayMode() {
+        val loopMode = if (dataStore[LoopPlaybackKey] ?: true) Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_OFF
+        when {
+            player.shuffleModeEnabled -> {
+                setShuffleModeEnabled(false)
+                player.repeatMode = Player.REPEAT_MODE_ONE
+            }
+            player.repeatMode == Player.REPEAT_MODE_ONE -> {
+                setShuffleModeEnabled(false)
+                player.repeatMode = loopMode
+            }
+            else -> {
+                setShuffleModeEnabled(true)
+                player.repeatMode = loopMode
+            }
+        }
+    }
+
+    private inner class LibrarySessionCallback : MediaLibrarySession.Callback {
+        override fun onConnectAsync(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+        ): ListenableFuture<MediaSession.ConnectionResult> {
+            val result = MediaSession.ConnectionResult.AcceptedResultBuilder(session, controller)
+            if (!controller.isTrusted && controller.packageName != packageName) {
+                return Futures.immediateFuture(result.build())
+            }
+            val commands = result.build().availableSessionCommands.buildUpon()
+                .add(SessionCommand(NOTIFICATION_LEFT_COMMAND, Bundle.EMPTY))
+                .add(SessionCommand(NOTIFICATION_RIGHT_COMMAND, Bundle.EMPTY))
+                .build()
+            return Futures.immediateFuture(result.setAvailableSessionCommands(commands).build())
+        }
+
+        override fun onCustomCommand(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            customCommand: SessionCommand,
+            args: Bundle,
+        ): ListenableFuture<SessionResult> {
+            val action = when (customCommand.customAction) {
+                NOTIFICATION_LEFT_COMMAND -> notificationLeftAction
+                NOTIFICATION_RIGHT_COMMAND -> notificationRightAction
+                else -> return Futures.immediateFuture(SessionResult(SessionResult.RESULT_ERROR_NOT_SUPPORTED))
+            }
+            when (action) {
+                NotificationAction.None -> return Futures.immediateFuture(SessionResult(SessionResult.RESULT_ERROR_NOT_SUPPORTED))
+                NotificationAction.PlayMode -> {
+                    if (player.currentMediaItem == null) {
+                        return Futures.immediateFuture(SessionResult(SessionResult.RESULT_ERROR_INVALID_STATE))
+                    }
+                    switchPlayMode()
+                    return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                }
+                NotificationAction.FloatingLyrics -> {
+                    val success = player.currentMediaItem != null && toggleFloatingLyrics()
+                    return Futures.immediateFuture(SessionResult(
+                        if (success) SessionResult.RESULT_SUCCESS else SessionResult.RESULT_ERROR_INVALID_STATE,
+                    ))
+                }
+                NotificationAction.Like -> {
+                    val id = notificationLikeSongId()
+                        ?: return Futures.immediateFuture(SessionResult(SessionResult.RESULT_ERROR_INVALID_STATE))
+                    if (!notificationSignedIn) {
+                        Toast.makeText(this@MusicService, R.string.notification_like_login_required, Toast.LENGTH_SHORT).show()
+                        return Futures.immediateFuture(SessionResult(SessionResult.RESULT_ERROR_PERMISSION_DENIED))
+                    }
+                    val expectedSession = neteaseSessionFingerprint(notificationAccount?.first.orEmpty())
+                    val future = SettableFuture.create<SessionResult>()
+                    scope.launch {
+                        val result = playerRepository.toggleLike(id, expectedSession)
+                        if (result is Resource.Success) {
+                            future.set(SessionResult(SessionResult.RESULT_SUCCESS))
+                        } else {
+                            Toast.makeText(this@MusicService, R.string.notification_like_failed, Toast.LENGTH_SHORT).show()
+                            future.set(SessionResult(SessionResult.RESULT_ERROR_UNKNOWN))
+                        }
+                    }.invokeOnCompletion { error ->
+                        if (error != null) future.set(SessionResult(SessionResult.RESULT_ERROR_UNKNOWN))
+                    }
+                    return future
+                }
+            }
+        }
+    }
 
     fun playNext(items: List<MediaItem>) {
         scope.launch {
@@ -852,6 +1106,7 @@ class MusicService : MediaLibraryService(),
     }
 
     override fun onDestroy() {
+        NotificationManagerCompat.from(this).cancel(FLOATING_LYRICS_NOTIFICATION_ID)
         if (::systemLyricsBridge.isInitialized) systemLyricsBridge.release()
         mediaUriProvider.onSourceResolved = null
         availableQualitiesJob?.cancel()
@@ -1142,6 +1397,7 @@ class MusicService : MediaLibraryService(),
     companion object {
         const val CHANNEL_ID = "music_channel_01"
         const val NOTIFICATION_ID = 888
+        private const val FLOATING_LYRICS_NOTIFICATION_ID = 889
         private const val PLAYBACK_SNAPSHOT_DEBOUNCE_MS = 500L
         private const val MAX_SOURCE_RECOVERY_ATTEMPTS = 1
         private const val PLAYBACK_SNAPSHOT_INTERVAL_MS = 5_000L
