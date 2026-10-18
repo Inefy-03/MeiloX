@@ -9,6 +9,18 @@ import org.junit.Test
 
 class MeloXRepositoryHistoryTest {
     @Test
+    fun listenTogetherRejectionPrefersReadableCopywritingAndFallsBackToStatus() {
+        fun parse(json: String) = parseListenTogetherRoomCheck(JsonParser.parseString(json).asJsonObject)
+
+        assertEquals(false to "Room is full", parse("""{"joinable":false,"status":"FULL","copywriting":"Room is full"}"""))
+        for (copywriting in listOf("null", "\"\"", "\"   \"")) {
+            assertEquals(false to "FULL", parse("""{"joinable":false,"status":"FULL","copywriting":$copywriting}"""))
+        }
+        assertEquals(true to "NORMAL", parse("""{"joinable":true,"status":"NORMAL","copywriting":"Unused message"}"""))
+        assertEquals(false to null, parseListenTogetherRoomCheck(null))
+    }
+
+    @Test
     fun recentHistoryReaderNormalizesSecondsToMilliseconds() {
         val song = parseRecentHistorySong(
             JsonParser.parseString(
