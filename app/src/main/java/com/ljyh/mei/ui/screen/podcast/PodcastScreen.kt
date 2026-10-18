@@ -79,6 +79,8 @@ import com.ljyh.mei.ui.screen.playlist.component.PlaylistSurface
 import com.ljyh.mei.utils.rememberPreference
 import kotlinx.coroutines.flow.distinctUntilChanged
 
+private const val MaxAutomaticRestorationPages = 3
+
 @Composable
 fun PodcastScreen(
     viewModel: PodcastViewModel = hiltViewModel(),
@@ -379,7 +381,17 @@ fun PodcastDetailScreen(
     val downloadViewModel: com.ljyh.mei.ui.screen.playlist.PlaylistViewModel = hiltViewModel()
     val selection = rememberDetailSelection(id)
     val listState = rememberLazyListState()
+    var restoredListIndex by remember(id, listState) { androidx.compose.runtime.mutableIntStateOf(listState.firstVisibleItemIndex) }
+    var restorationRequests by remember(id) { androidx.compose.runtime.mutableIntStateOf(0) }
+    var waitingForRestorationPage by remember(id) { mutableStateOf(false) }
+    var restorationStopped by remember(id) { mutableStateOf(false) }
     val detail = state.detail
+    val restorationTarget = detail?.let {
+        minOf(restoredListIndex, maxOf(it.totalCount, it.podcast.programCount, it.programs.size))
+    } ?: restoredListIndex
+    val needsRestorationPage = detail != null && detail.hasMore && detail.programs.size < restorationTarget
+    val restoringPrograms = needsRestorationPage && !restorationStopped &&
+        (restorationRequests < MaxAutomaticRestorationPages || waitingForRestorationPage)
     var searchActive by remember(id) { mutableStateOf(false) }
     var query by remember(id) { mutableStateOf("") }
     var searchResults by remember(id) { mutableStateOf<List<MediaMetadata>>(emptyList()) }
@@ -390,6 +402,19 @@ fun PodcastDetailScreen(
     val downloadPath by rememberPreference(com.ljyh.mei.constants.DownloadPathKey, com.ljyh.mei.utils.DownloadManager.getDefaultDownloadPath())
     val downloadQuality by com.ljyh.mei.utils.rememberEnumPreference(com.ljyh.mei.constants.DownloadQualityKey, com.ljyh.mei.constants.DownloadQuality.EXHIGH)
     LaunchedEffect(id) { viewModel.load(id) }
+    LaunchedEffect(id, query, restoringPrograms, detail?.nextOffset, state.isLoading, state.isLoadingMore, state.loadMoreError) {
+        if (query.isNotBlank() || !restoringPrograms || state.isLoading || state.isLoadingMore) return@LaunchedEffect
+        waitingForRestorationPage = false
+        if (state.loadMoreError != null || restorationRequests >= MaxAutomaticRestorationPages) {
+            // A stale position or flaky page must not hide the episodes already loaded.
+            listState.requestScrollToItem(0)
+            restorationStopped = true
+        } else {
+            restorationRequests++
+            waitingForRestorationPage = true
+            viewModel.loadMore()
+        }
+    }
     LaunchedEffect(id, query, state.isLoading) {
         searchError = null
         if (query.isBlank() || state.isLoading || detail == null) {
@@ -406,8 +431,8 @@ fun PodcastDetailScreen(
         } catch (error: Exception) { searchError = error.message }
         finally { searching = false }
     }
-    LaunchedEffect(id, listState, query) {
-        if (query.isNotBlank()) return@LaunchedEffect
+    LaunchedEffect(id, listState, query, restoringPrograms, state.loadMoreError) {
+        if (query.isNotBlank() || restoringPrograms || state.loadMoreError != null) return@LaunchedEffect
         snapshotFlow {
             val layout = listState.layoutInfo
             (layout.visibleItemsInfo.lastOrNull()?.index ?: -1) to layout.totalItemsCount
@@ -467,13 +492,20 @@ fun PodcastDetailScreen(
         },
         onDownload = { prepareDownload(ids = selection.ids) },
     )
+    fun refreshDetail() {
+        restoredListIndex = listState.firstVisibleItemIndex
+        restorationRequests = 0
+        waitingForRestorationPage = false
+        restorationStopped = false
+        viewModel.load(id, true)
+    }
     val menu = detailMenuItems(
         downloadTitle = stringResource(R.string.detail_podcast_download_all, count),
         subscriptionTitle = stringResource(if (detail?.podcast?.isSubscribed == true) R.string.detail_podcast_unsubscribe else R.string.podcast_subscribe),
         subscribed = detail?.podcast?.isSubscribed == true,
         onDownload = { prepareDownload(it) }, onSelect = selection::start,
         onSubscribe = viewModel::toggleSubscription,
-        onRefresh = { selection.finish(); viewModel.load(id, true) },
+        onRefresh = { selection.finish(); refreshDetail() },
     )
     fun play(trackId: Long? = null, shuffle: Boolean = false) {
         val playable = detail?.programs.orEmpty().filter { it.mainSongId != null }
@@ -491,7 +523,8 @@ fun PodcastDetailScreen(
             creatorName = detail?.podcast?.host?.nickname.orEmpty(), tracks = tracks,
             playCount = detail?.podcast?.playCount, isSubscribed = detail?.podcast?.isSubscribed == true,
         ),
-        isLoading = (state.isLoading && detail == null) || searching,
+        isLoading = (state.isLoading && detail == null) || searching || (query.isBlank() && restoringPrograms),
+        hasLoadedContent = detail != null,
         listState = listState,
         headerMetadata = listOf(stringResource(R.string.podcast_program_count, count),
             stringResource(R.string.song_wiki_play_count, (detail?.podcast?.playCount ?: 0).toString())).joinToString(" · "),
@@ -518,7 +551,7 @@ fun PodcastDetailScreen(
         onBack = { navController.navigateUp() },
         footer = {
             (searchError ?: state.error)?.let { error ->
-                item(key = "podcast-detail-error") { InlineErrorState(error) { viewModel.load(id, true) } }
+                item(key = "podcast-detail-error") { InlineErrorState(error, ::refreshDetail) }
             }
             if (query.isBlank() && (detail?.hasMore == true || state.isLoadingMore || state.loadMoreError != null)) {
                 item(key = "podcast-program-pagination") {

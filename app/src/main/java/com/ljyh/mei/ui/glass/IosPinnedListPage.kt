@@ -27,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -281,51 +282,54 @@ fun IosPinnedListPage(
         backgroundColor = backgroundColor,
         backgroundBrush = backgroundBrush,
     ) { contentPadding ->
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(
-                start = horizontalContentPadding,
-                top = contentPadding.calculateTopPadding(),
-                end = horizontalContentPadding,
-                bottom = contentPadding.calculateBottomPadding(),
-            ),
-            verticalArrangement = verticalArrangement,
-        ) {
-            if (showsLargeTitle) {
-                item(key = "ios-large-title:$title") {
-                    Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .graphicsLayer {
-                                alpha = 1f - collapseProgress
-                                val scale = 1f - 0.04f * collapseProgress
-                                scaleX = scale
-                                scaleY = scale
-                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.5f)
-                            }
-                            .blur(6.dp * collapseProgress)
-                            .offset(y = (-10).dp)
-                            .padding(horizontal = largeTitleHorizontalPadding, vertical = 6.dp),
-                    ) {
-                        Text(
-                            text = title,
-                            style = IosTypography.largeTitle,
-                            fontWeight = FontWeight.Bold,
-                            color = LocalGlassColors.current.content,
-                        )
-                        subtitle?.let {
+        // A different scroll state owns a different measurement node and item provider.
+        key(listState) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    start = horizontalContentPadding,
+                    top = contentPadding.calculateTopPadding(),
+                    end = horizontalContentPadding,
+                    bottom = contentPadding.calculateBottomPadding(),
+                ),
+                verticalArrangement = verticalArrangement,
+            ) {
+                if (showsLargeTitle) {
+                    item(key = "ios-large-title:$title") {
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .graphicsLayer {
+                                    alpha = 1f - collapseProgress
+                                    val scale = 1f - 0.04f * collapseProgress
+                                    scaleX = scale
+                                    scaleY = scale
+                                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.5f)
+                                }
+                                .blur(6.dp * collapseProgress)
+                                .offset(y = (-10).dp)
+                                .padding(horizontal = largeTitleHorizontalPadding, vertical = 6.dp),
+                        ) {
                             Text(
-                                text = it,
-                                style = IosTypography.subheadline,
-                                color = LocalGlassColors.current.secondaryContent,
-                                modifier = Modifier.padding(top = 3.dp),
+                                text = title,
+                                style = IosTypography.largeTitle,
+                                fontWeight = FontWeight.Bold,
+                                color = LocalGlassColors.current.content,
                             )
+                            subtitle?.let {
+                                Text(
+                                    text = it,
+                                    style = IosTypography.subheadline,
+                                    color = LocalGlassColors.current.secondaryContent,
+                                    modifier = Modifier.padding(top = 3.dp),
+                                )
+                            }
                         }
                     }
                 }
+                content()
             }
-            content()
         }
     }
 }

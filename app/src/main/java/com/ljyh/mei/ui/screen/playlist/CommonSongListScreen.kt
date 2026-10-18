@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
@@ -103,6 +104,7 @@ fun CommonSongListScreen(
     headerMetadata: String? = null,
     footer: (androidx.compose.foundation.lazy.LazyListScope.() -> Unit)? = null,
     useCoverBackground: Boolean = false,
+    hasLoadedContent: Boolean = true,
 ) {
     var detailMenuOpen by remember { mutableStateOf(false) }
     val detailMenuTriggerAlpha = remember { androidx.compose.runtime.mutableFloatStateOf(1f) }
@@ -134,6 +136,7 @@ fun CommonSongListScreen(
     val listBackgroundAlpha = if (useCoverBackground) {
         SheetGroupedListBackgroundAlpha
     } else LocalGroupedListBackgroundAlpha.current
+    val layoutState = rememberSongListLayoutState(listState, isContentReady = !isLoading && hasLoadedContent)
 
     LaunchedEffect(isPlaylistSearchActive) {
         if (isPlaylistSearchActive && onPlaylistSearchQueryChange != null) {
@@ -157,7 +160,7 @@ fun CommonSongListScreen(
                     !isPlaylistSearchActive && it.isNotBlank()
                 },
                 showsLargeTitle = false,
-                listState = listState,
+                listState = layoutState,
                 backgroundColor = coverBackground.color,
                 backgroundBrush = coverBackground.brush.takeIf { useCoverBackground },
                 bottomPadding = if (selectionMode) 84.dp else bottomPadding,
@@ -355,6 +358,13 @@ fun CommonSongListScreen(
             )
         }
     }
+}
+
+@Composable
+internal fun rememberSongListLayoutState(contentState: LazyListState, isContentReady: Boolean): LazyListState {
+    // Measuring a single placeholder with restored content state would clamp its saved position.
+    val loadingState = remember { LazyListState() }
+    return if (isContentReady) contentState else loadingState
 }
 
 /** Small reusable iOS action used by callers that still expose a text action. */
