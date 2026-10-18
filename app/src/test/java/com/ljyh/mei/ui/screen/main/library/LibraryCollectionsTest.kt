@@ -3,6 +3,8 @@ package com.ljyh.mei.ui.screen.main.library
 import com.ljyh.mei.constants.LibraryStyle
 import com.ljyh.mei.data.repository.LibraryAccount
 import com.ljyh.mei.data.repository.LibraryCollectionPage
+import com.ljyh.mei.data.repository.collectLibraryPages
+import kotlinx.coroutines.runBlocking
 import com.ljyh.mei.ui.navigation.ContentFeature
 import com.ljyh.mei.ui.navigation.LibraryPage
 import org.junit.Assert.assertEquals
@@ -13,6 +15,42 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LibraryCollectionsTest {
+    @Test
+    fun completePlaylistChoicesContinuePastOneHundredAndDeduplicateOverlap() = runBlocking {
+        val offsets = mutableListOf<Int>()
+        val choices = collectLibraryPages(key = { it }) { offset ->
+            offsets += offset
+            when (offset) {
+                0 -> LibraryCollectionPage((1..100).map(Int::toString), 100, true)
+                100 -> LibraryCollectionPage((100..140).map(Int::toString), 141, false)
+                else -> error("Unexpected offset")
+            }
+        }
+        assertEquals(listOf(0, 100), offsets)
+        assertEquals((1..140).map(Int::toString), choices)
+    }
+
+    @Test
+    fun incompletePlaylistChoicesFailOnEmptyRepeatedOrNonAdvancingContinuation() = runBlocking {
+        listOf(
+            LibraryCollectionPage(emptyList<String>(), 100, true),
+            LibraryCollectionPage(listOf("one"), 200, true),
+            LibraryCollectionPage(listOf("two"), 100, true),
+        ).forEach { continuation ->
+            val result = runCatching {
+                collectLibraryPages(key = { it }) { offset ->
+                    if (offset == 0) LibraryCollectionPage(listOf("one"), 100, true)
+                    else continuation
+                }
+            }
+            assertTrue(result.exceptionOrNull() is IllegalStateException)
+        }
+        val empty = collectLibraryPages<String>(key = { it }) {
+            LibraryCollectionPage(emptyList(), 0, false)
+        }
+        assertTrue(empty.isEmpty())
+    }
+
     @Test
     fun defaultPageUsesTheMergedAlbumPageOnlyForTheDefaultStyle() {
         val enabledFeatures = ContentFeature.entries.toSet()

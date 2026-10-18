@@ -25,7 +25,7 @@ import com.ljyh.mei.data.model.weapi.EveryDaySongs
 import com.ljyh.mei.data.network.Resource
 import com.ljyh.mei.data.network.api.ApiService
 import com.ljyh.mei.data.repository.PlaylistRepository
-import com.ljyh.mei.data.repository.UserRepository
+import com.ljyh.mei.data.repository.LibraryCollectionsRepository
 import com.ljyh.mei.di.repository.ColorRepository
 import com.ljyh.mei.di.repository.LikeRepository
 import com.ljyh.mei.utils.dataStore
@@ -36,6 +36,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -52,11 +56,11 @@ internal fun MediaMetadata.matchesPlaylistSearch(query: String): Boolean {
 @HiltViewModel
 class PlaylistViewModel @Inject constructor(
     private val repository: PlaylistRepository,
-    private val userRepository: UserRepository,
     private val likeRepository: LikeRepository,
     private val colorRepository: ColorRepository,
     private val localPlaylistRepository: com.ljyh.mei.di.repository.LocalPlaylistRepository,
-    val apiService: ApiService
+    val apiService: ApiService,
+    private val collections: LibraryCollectionsRepository,
 ) : ViewModel() {
     val userId = AppContext.instance.dataStore[UserIdKey] ?: ""
 
@@ -82,6 +86,7 @@ class PlaylistViewModel @Inject constructor(
 
     private val _playlist = MutableStateFlow<List<Playlist>>(emptyList())
     val playlist: StateFlow<List<Playlist>> = _playlist
+    private var playlistChoicesJob: Job? = null
 
 
     private val _everyDay = MutableStateFlow<Resource<EveryDaySongs>>(Resource.Loading)
@@ -199,34 +204,43 @@ class PlaylistViewModel @Inject constructor(
     fun markTrackRemoved(trackId: Long) {
         _removedTrackIds.value = _removedTrackIds.value + trackId
     }
-    fun getAllMePlaylist(){
-        viewModelScope.launch {
-            _playlist.value = localPlaylistRepository.getPlaylistByAuthor(userId)
-            if (userId.isNotEmpty()) {
-                when (val result = userRepository.getUserPlaylist(userId, 100)) {
-                    is Resource.Success -> {
-                        val existingPlaylists = localPlaylistRepository.getPlaylistByAuthor(userId)
-                        val existingMap = existingPlaylists.associateBy { it.id }
-                        val playlistsToInsert = result.data.playlist.map {
-                            val existing = existingMap[it.id.toString()]
-                            Playlist(
-                                id = it.id.toString(),
-                                title = it.name,
-                                cover = it.coverImgUrl,
-                                author = it.creator.userId.toString(),
-                                authorName = it.creator.nickname,
-                                authorAvatar = it.creator.avatarUrl,
-                                count = it.trackCount,
-                                playCount = it.playCount,
-                                lastPlayTime = existing?.lastPlayTime ?: 0L,
-                                localPlayCount = existing?.localPlayCount ?: 0
-                            )
-                        }
-                        localPlaylistRepository.insertPlaylists(playlistsToInsert)
-                        _playlist.value = localPlaylistRepository.getPlaylistByAuthor(userId)
+    fun getAllMePlaylist() {
+        playlistChoicesJob?.cancel()
+        _playlist.value = emptyList()
+        playlistChoicesJob = viewModelScope.launch {
+            collections.accounts.collectLatest { account ->
+                _playlist.value = emptyList()
+                if (account == null) return@collectLatest
+                try {
+                    val cached = localPlaylistRepository.getPlaylistByAuthor(account.userId)
+                    if (collections.accounts.first() != account) return@collectLatest
+                    _playlist.value = cached
+                    val playlists = collections.allPlaylists(account)
+                    if (collections.accounts.first() != account) return@collectLatest
+                    val existingPlaylists = localPlaylistRepository.getPlaylistByAuthor(account.userId)
+                    val existingMap = existingPlaylists.associateBy { it.id }
+                    val playlistsToInsert = playlists.map {
+                        val existing = existingMap[it.id.toString()]
+                        Playlist(
+                            id = it.id.toString(),
+                            title = it.name,
+                            cover = it.coverImgUrl,
+                            author = it.creator.userId.toString(),
+                            authorName = it.creator.nickname,
+                            authorAvatar = it.creator.avatarUrl,
+                            count = it.trackCount,
+                            playCount = it.playCount,
+                            lastPlayTime = existing?.lastPlayTime ?: 0L,
+                            localPlayCount = existing?.localPlayCount ?: 0
+                        )
                     }
-                    is Resource.Error -> {}
-                    Resource.Loading -> {}
+                    localPlaylistRepository.insertPlaylists(playlistsToInsert)
+                    val updated = localPlaylistRepository.getPlaylistByAuthor(account.userId)
+                    if (collections.accounts.first() == account) _playlist.value = updated
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    // Keep this account's cached choices available after a failed refresh.
                 }
             }
         }

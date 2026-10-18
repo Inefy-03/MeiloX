@@ -116,9 +116,12 @@ class LibraryCollectionsRepository @Inject constructor(
         return LibraryCollectionPage(
             items = response.playlist,
             nextOffset = offset + response.playlist.size,
-            hasMore = response.more && response.playlist.isNotEmpty(),
+            hasMore = response.more,
         )
     }
+
+    suspend fun allPlaylists(account: LibraryAccount): List<UserPlaylist.Playlist> =
+        collectLibraryPages(key = { it.id.toString() }) { offset -> playlists(account, offset) }
 
     suspend fun albumSubscription(account: LibraryAccount, id: Long): Boolean = albumWriteMutex.withLock {
         ensureAccount(account)
@@ -157,6 +160,25 @@ class LibraryCollectionsRepository @Inject constructor(
     } catch (_: Exception) {
         eapi.post(path.replaceFirst("/api/", "/eapi/"), body).also { it.requireSuccess() }
     }
+}
+
+/** Keep raw offsets while rejecting a continuation that repeats the same page. */
+internal suspend fun <T> collectLibraryPages(
+    key: (T) -> String,
+    loadPage: suspend (Int) -> LibraryCollectionPage<T>,
+): List<T> {
+    val items = linkedMapOf<String, T>()
+    var offset = 0
+    do {
+        val page = loadPage(offset)
+        val previousSize = items.size
+        page.items.forEach { items.putIfAbsent(key(it), it) }
+        if (!page.hasMore) return items.values.toList()
+        check(page.nextOffset > offset && items.size > previousSize) {
+            "NetEase playlist pagination did not advance"
+        }
+        offset = page.nextOffset
+    } while (true)
 }
 
 private fun JsonObject.requireSuccess() {
