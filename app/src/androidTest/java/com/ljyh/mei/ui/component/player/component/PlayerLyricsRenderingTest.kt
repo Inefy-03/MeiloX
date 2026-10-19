@@ -1,25 +1,35 @@
 package com.ljyh.mei.ui.component.player.component
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toPixelMap
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.kyant.backdrop.backdrops.emptyBackdrop
 import com.ljyh.mei.ui.component.player.FloatingLyricsPipContent
+import com.ljyh.mei.ui.component.player.component.applemusic.playerLyricsFade
 import com.ljyh.mei.ui.glass.LocalGlassBackdrop
 import com.ljyh.mei.ui.glass.LocalGlassColors
 import com.ljyh.mei.ui.glass.defaultGlassColors
@@ -124,6 +134,70 @@ class PlayerLyricsRenderingTest {
         compose.runOnIdle {
             assertSame(line, clickedLine.get())
             assertEquals(2_000, clickedLine.get().start)
+        }
+    }
+
+    @Test
+    fun lyricsKeepAdditiveBlendingThroughoutThePlayerFade() {
+        val visibility = mutableStateOf(0.25f)
+        val background = Color(0.10f, 0.25f, 0.40f)
+        val line = SyncedLine(
+            content = "MMMM",
+            translation = "",
+            start = 1_000,
+            end = 5_000,
+        )
+        compose.setContent {
+            MaterialTheme {
+                Box(
+                    Modifier
+                        .width(260.dp)
+                        .height(240.dp)
+                        .background(background)
+                        .testTag("lyrics-fade-background")
+                ) {
+                    Box(Modifier.fillMaxSize().playerLyricsFade(visibility)) {
+                        PlayerLyricsView(
+                            listState = rememberLazyListState(),
+                            lyrics = SyncedLyrics(lines = listOf(line)),
+                            currentPosition = { 0 },
+                            onLineClicked = {},
+                            onLinePressed = {},
+                            isManualScrolling = false,
+                            modifier = Modifier
+                                .padding(vertical = 8.dp)
+                                .graphicsLayer {
+                                    blendMode = BlendMode.Plus
+                                    compositingStrategy = CompositingStrategy.Offscreen
+                                },
+                            useBlurEffect = false,
+                            showPhonetic = false,
+                            offset = 48.dp,
+                            keepAliveZone = 0.dp,
+                        )
+                    }
+                }
+            }
+        }
+
+        for (alpha in listOf(0.25f, 0.5f, 0.75f, 1f, 0.5f, 0f)) {
+            compose.runOnIdle { visibility.value = alpha }
+            val pixels = compose.onNodeWithTag("lyrics-fade-background")
+                .captureToImage()
+                .toPixelMap()
+            // A solid glyph interior has the highest red channel. Capturing the
+            // background too distinguishes additive blending from a flattened fade.
+            var glyph = pixels[0, 0]
+            for (y in 0 until pixels.height) {
+                for (x in 0 until pixels.width) {
+                    if (pixels[x, y].red > glyph.red) glyph = pixels[x, y]
+                }
+            }
+            val contribution = 0.4f * alpha
+            val tolerance = 0.03f
+            assertEquals("Red contribution at visibility $alpha", background.red + contribution, glyph.red, tolerance)
+            assertEquals("Green contribution at visibility $alpha", background.green + contribution, glyph.green, tolerance)
+            assertEquals("Blue contribution at visibility $alpha", background.blue + contribution, glyph.blue, tolerance)
         }
     }
 

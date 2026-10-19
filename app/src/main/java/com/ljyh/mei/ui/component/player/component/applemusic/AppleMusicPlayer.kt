@@ -58,6 +58,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
@@ -317,7 +318,7 @@ fun AppleMusicPlayer(
                                 if (showLyrics || lyricVisibilityAlpha.value > 0f) placeable.place(0, 0)
                             }
                         }
-                        .graphicsLayer { alpha = lyricVisibilityAlpha.value }
+                        .playerLyricsFade(lyricVisibilityAlpha)
                         .then(if (showLyrics && sheetExpanded) Modifier else Modifier.clearAndSetSemantics { }),
                 ) {
                     Column(Modifier.fillMaxSize()) {
@@ -546,6 +547,12 @@ fun AppleMusicPlayer(
             }
         }
     }
+}
+
+internal fun Modifier.playerLyricsFade(alpha: State<Float>): Modifier = graphicsLayer {
+    this.alpha = alpha.value
+    // Keep descendant Plus blending connected to the background during the fade.
+    compositingStrategy = CompositingStrategy.ModulateAlpha
 }
 
 /** Retain text measurement while transparent groups have neither layout height nor input. */
