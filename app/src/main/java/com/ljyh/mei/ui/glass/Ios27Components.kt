@@ -102,7 +102,6 @@ import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.highlight.Highlight
-import com.kyant.backdrop.shadow.InnerShadow
 import com.kyant.backdrop.shadow.Shadow
 import com.kyant.capsule.ContinuousRoundedRectangle
 import com.kyant.shapes.Capsule
@@ -725,6 +724,7 @@ fun IosContextMenu(
     ).coerceIn(0f, 1f)
     val menuHeight = heightOverride ?: (20.dp + 44.dp * itemCount)
     val radius = 34.dp
+    val menuShape = remember(radius) { RoundedRectangle(radius) }
     val transitionScale = 0.24f + 0.76f * animationProgress
     val startOrigin = TransformOrigin(1f, if (opensAbove) 1f else 0f)
     val originProgress = transformOriginProgress.coerceIn(0f, 1f)
@@ -735,6 +735,7 @@ fun IosContextMenu(
             (0.5f - startOrigin.pivotFractionY) * originProgress,
     )
     val appearance = LocalGlassAppearance.current
+    val innerShadows = rememberNavigationInnerShadows(true)
     val childBackdrop = rememberLayerBackdrop()
     // Context menus render in a separate Popup window. Map their sampling coordinates back
     // to the source window so the menu refracts the content physically behind its position.
@@ -743,8 +744,9 @@ fun IosContextMenu(
     } else {
         emptyBackdrop()
     }
-    val isLight = !LocalGlassColors.current.isDark
-    val elevatedBackground = LocalGlassColors.current.elevatedBackground
+    val colors = LocalGlassColors.current
+    val isLight = !colors.isDark
+    val elevatedBackground = colors.elevatedBackground
     val menuLayerBlock: GraphicsLayerScope.() -> Unit = {
         transformOrigin = startOrigin
         applyGlassDragScale(
@@ -821,7 +823,7 @@ fun IosContextMenu(
                         )
                     }
                     .navigationGlassBoxShadow(
-                        shape = { RoundedRectangle(radius) },
+                        shape = { menuShape },
                         alpha = GlassBoxShadowAlpha * shadowAlpha.coerceIn(0f, 1f),
                         layerBlock = menuLayerBlock,
                     ),
@@ -832,7 +834,7 @@ fun IosContextMenu(
                         .drawBackdrop(
                             backdrop = samplingBackdrop,
                             exportedBackdrop = childBackdrop.takeIf { appearance.usesBackdrop },
-                            shape = { RoundedRectangle(radius) },
+                            shape = { menuShape },
                             effects = {
                                 if (appearance.usesBackdrop) {
                                     blur(if (isLight) 16.dp.toPx() else 12.dp.toPx())
@@ -853,7 +855,7 @@ fun IosContextMenu(
                                         shadowAlpha.coerceIn(0f, 1f),
                                 )
                             },
-                            innerShadow = { InnerShadow(radius = 8.dp, alpha = 0.10f * progress) },
+                            innerShadow = null,
                             layerBlock = menuLayerBlock,
                             onDrawSurface = {
                                 drawRect(
@@ -861,6 +863,7 @@ fun IosContextMenu(
                                         alpha = if (appearance.usesBackdrop) 0.70f * progress else 1f,
                                     ),
                                 )
+                                innerShadows?.draw(this, menuShape, isDark = colors.isDark)
                             },
                         )
                         .then(interactiveHighlight.modifier)
@@ -1720,6 +1723,7 @@ fun IosSheetSurface(
     val colors = LocalGlassColors.current
     val appearance = LocalGlassAppearance.current
     val isLight = !colors.isDark
+    val innerShadows = rememberNavigationInnerShadows(true)
     val animationScope = rememberCoroutineScope()
     val activeInteractiveHighlight = interactiveHighlight ?: remember(animationScope) {
         InteractiveHighlight(animationScope = animationScope)
@@ -1757,7 +1761,7 @@ fun IosSheetSurface(
                     effects = {},
                     highlight = { Highlight.Default.copy(alpha = if (isLight) 0.58f else 0.38f) },
                     shadow = { Shadow(radius = 48.dp, alpha = 0.25f) },
-                    innerShadow = { InnerShadow(radius = 8.dp, alpha = 0.12f) },
+                    innerShadow = null,
                     layerBlock = sheetLayerBlock,
                     onDrawSurface = {
                         drawRect(
@@ -1768,6 +1772,7 @@ fun IosSheetSurface(
                         if (appearance.usesBackdrop) {
                             drawRect(Color.White.copy(alpha = if (isLight) 0.12f else 0.04f))
                         }
+                        innerShadows?.draw(this, shape, isDark = colors.isDark)
                     },
                 )
                 .then(activeInteractiveHighlight.modifier)
