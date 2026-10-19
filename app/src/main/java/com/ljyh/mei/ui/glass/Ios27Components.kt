@@ -20,7 +20,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -37,6 +38,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.SheetState
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -376,6 +378,28 @@ fun IosSheetTopToolbarButton(
         modifier = modifier,
         enabled = enabled,
         navigationSurfaceColor = groupedListBackground,
+        navigationSurfaceAlphaMultiplier = 1f,
+        sampleBackdrop = false,
+        content = content,
+    )
+}
+
+/** Text actions share the sheet toolbar's tint, highlight, and press physics. */
+@Composable
+fun IosSheetButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    content: @Composable RowScope.() -> Unit,
+) {
+    val colors = LocalGlassColors.current
+    GlassButton(
+        onClick = onClick,
+        modifier = modifier,
+        enabled = enabled,
+        navigationSurfaceColor = colors.elevatedBackground.copy(
+            alpha = LocalGroupedListBackgroundAlpha.current.coerceIn(0f, 1f),
+        ),
         navigationSurfaceAlphaMultiplier = 1f,
         sampleBackdrop = false,
         content = content,
@@ -1614,6 +1638,7 @@ fun IosModalOverlay(
 
 /** Figma node 10525:1632. The glass shell reaches behind system navigation. */
 @OptIn(ExperimentalMaterial3Api::class)
+@Suppress("DEPRECATION")
 @Composable
 fun IosModalSheet(
     onDismissRequest: () -> Unit,
@@ -1621,6 +1646,8 @@ fun IosModalSheet(
     skipPartiallyExpanded: Boolean = true,
     backdrop: Backdrop = LocalBlurBackdrop.current,
     contentWindowInsets: @Composable () -> WindowInsets = { WindowInsets.statusBars },
+    sheetState: SheetState = rememberModalBottomSheetState(skipPartiallyExpanded = skipPartiallyExpanded),
+    contentNavigationBarInsets: @Composable () -> WindowInsets = { WindowInsets.navigationBars },
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val animationScope = rememberCoroutineScope()
@@ -1629,7 +1656,7 @@ fun IosModalSheet(
     }
     ModalBottomSheet(
         onDismissRequest = onDismissRequest,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = skipPartiallyExpanded),
+        sheetState = sheetState,
         modifier = modifier.graphicsLayer {
             clip = false
             applyGlassDragScale(
@@ -1645,6 +1672,14 @@ fun IosModalSheet(
         dragHandle = null,
         contentWindowInsets = contentWindowInsets,
     ) {
+        val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
+        SideEffect {
+            dialogWindow?.apply {
+                navigationBarColor = android.graphics.Color.TRANSPARENT
+                navigationBarDividerColor = android.graphics.Color.TRANSPARENT
+                isNavigationBarContrastEnforced = false
+            }
+        }
         IosSheetSurface(
             modifier = Modifier.fillMaxWidth(),
             backdrop = backdrop,
@@ -1653,7 +1688,7 @@ fun IosModalSheet(
             applyDragScale = false,
         ) {
             Column(
-                Modifier.fillMaxWidth().navigationBarsPadding(),
+                Modifier.fillMaxWidth().windowInsetsPadding(contentNavigationBarInsets()),
             ) {
                 Box(
                     Modifier.fillMaxWidth().height(16.dp),

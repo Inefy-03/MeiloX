@@ -726,4 +726,20 @@
     <string name="artist_all_albums_count">全部 %1$d 张专辑</string>
     <string name="artist_all_albums">全部专辑</string>
     <string name="artist_albums_empty">暂无专辑</string>
+
+    <string name="lyric_selection_title">歌词来源</string>
+    <string name="lyric_selection_close">关闭歌词来源</string>
+    <string name="lyric_selection_best_match">最佳匹配</string>
+    <string name="lyric_selection_source_netease">网易云音乐</string>
+    <string name="lyric_selection_source_qq">QQ 音乐</string>
+    <string name="lyric_selection_source_am">Apple Music</string>
+    <string name="lyric_selection_source_other">歌词来源</string>
+    <string name="lyric_selection_empty">没有找到歌词来源</string>
+    <string name="lyric_selection_delay">歌词延迟</string>
+    <string name="lyric_selection_offset">%1$+.1f 秒</string>
+    <string name="lyric_selection_earlier">−0.5 秒</string>
+    <string name="lyric_selection_later">+0.5 秒</string>
+    <string name="lyric_selection_delay_hint">负值提前，正值延后，仅对这首歌生效。</string>
+    <string name="lyric_selection_reset_delay">恢复默认延迟</string>
+    <string name="lyric_selection_reset_source">恢复默认来源</string>
 </resources>

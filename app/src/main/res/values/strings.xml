@@ -727,4 +727,20 @@
     <string name="artist_all_albums_count">All %1$d albums</string>
     <string name="artist_all_albums">All Albums</string>
     <string name="artist_albums_empty">No albums available</string>
+
+    <string name="lyric_selection_title">Lyric sources</string>
+    <string name="lyric_selection_close">Close lyric sources</string>
+    <string name="lyric_selection_best_match">Best match</string>
+    <string name="lyric_selection_source_netease">NetEase Cloud Music</string>
+    <string name="lyric_selection_source_qq">QQ Music</string>
+    <string name="lyric_selection_source_am">Apple Music</string>
+    <string name="lyric_selection_source_other">Lyric source</string>
+    <string name="lyric_selection_empty">No lyric sources found</string>
+    <string name="lyric_selection_delay">Lyric delay</string>
+    <string name="lyric_selection_offset">%1$+.1f s</string>
+    <string name="lyric_selection_earlier">−0.5 s</string>
+    <string name="lyric_selection_later">+0.5 s</string>
+    <string name="lyric_selection_delay_hint">Negative is earlier, positive is later. Saved for this song.</string>
+    <string name="lyric_selection_reset_delay">Reset delay</string>
+    <string name="lyric_selection_reset_source">Default source</string>
 </resources>

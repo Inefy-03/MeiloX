@@ -684,6 +684,8 @@ fun GlassButton(
     navigationSurfaceColor: Color? = null,
     enabled: Boolean = true,
     emphasis: GlassEmphasis = GlassEmphasis.Regular,
+    navigationSurfaceAlphaMultiplier: Float = 1.25f,
+    sampleBackdrop: Boolean = true,
     content: @Composable RowScope.() -> Unit,
 ) {
     GlassSurface(
@@ -691,9 +693,11 @@ fun GlassButton(
         backdrop = backdrop,
         style = style,
         navigationSurfaceColor = navigationSurfaceColor,
+        navigationSurfaceAlphaMultiplier = navigationSurfaceAlphaMultiplier,
         shape = Capsule(),
         emphasis = emphasis,
         enabled = enabled,
+        sampleBackdrop = sampleBackdrop,
         onClick = onClick,
     ) {
         Row(
