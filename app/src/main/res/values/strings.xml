@@ -722,8 +722,8 @@
     <string name="detail_download_queued">Added %1$d items to downloads</string>
     <string name="system_lyrics_settings">Lyric sharing</string>
     <string name="system_lyrics_enabled">Enable lyric sharing</string>
-    <string name="system_lyrics_description">Shares lyrics and playback state through the Lyricon Provider and SuperLyricApi SDKs.</string>
-    <string name="system_lyrics_usage">Integrated with the Lyricon Provider and SuperLyricApi SDKs.</string>
+    <string name="system_lyrics_description">Shares lyrics and playback state through Lyricon Provider, SuperLyricApi, and ColorOS Live Lyrics Bridge.</string>
+    <string name="system_lyrics_usage">Supports the Lyricon Provider, SuperLyricApi, and ColorOS Live Lyrics Bridge interfaces.</string>
     <string name="artist_all_albums_count">All %1$d albums</string>
     <string name="artist_all_albums">All Albums</string>
     <string name="artist_albums_empty">No albums available</string>

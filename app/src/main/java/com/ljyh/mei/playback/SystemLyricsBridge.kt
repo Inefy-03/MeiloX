@@ -32,7 +32,7 @@ internal class SystemLyricsBridge(
     private val lyricManager: LyricManager,
     session: MediaSession,
 ) : Player.Listener {
-    private val colorOsPublisher = ColorOsLyricsPublisher(session)
+    private val colorOsPublisher = ColorOsLyricsPublisher(context, session)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val superLyricPublisher = SuperLyricPublisher(player, scope)
     private var provider: LyriconProvider? = null
@@ -146,6 +146,7 @@ internal class SystemLyricsBridge(
         colorOsPublisher.setLyrics(
             current.id.toString(),
             song.toColorOsLyricInfo(context.packageName, generation),
+            hasTranslation = song.lyrics.orEmpty().any { !it.translation.isNullOrBlank() },
         )
         withProvider {
             provider?.player?.apply {

@@ -42,7 +42,7 @@ MeiloX 是一个基于 [Mei](https://github.com/ljyh223/Mei) 改造的第三方�
 
 ## 歌词共享
 
-已接入 [Lyricon Provider](https://tomakino.github.io/lyricon/zh-cn/developer/provider/) 和 [SuperLyricApi](https://github.com/HChenX/SuperLyricApi) SDK，用于共享歌词、逐字时间、翻译及播放状态。
+已接入 [Lyricon Provider](https://tomakino.github.io/lyricon/zh-cn/developer/provider/)、[SuperLyricApi](https://github.com/HChenX/SuperLyricApi) 和 [ColorOS Live Lyrics Bridge](https://github.com/Andrea-lyz/ColorOS-Live-Lyrics-Bridge) 接口，用于共享歌词、逐字时间、翻译及播放状态。
 
 「设置 → 歌词设置 → 歌词共享」中的「启用歌词共享」默认开启。
 
@@ -56,6 +56,7 @@ MeiloX 的界面、歌词和底层能力受以下项目启发或直接使用其�
 - [accompanist-lyrics-ui](https://github.com/6xingyv/accompanist-lyrics-ui)：歌词模型与渲染组件；
 - [Lyricon](https://github.com/tomakino/lyricon)：词幕 Provider SDK；
 - [SuperLyricApi](https://github.com/HChenX/SuperLyricApi)：歌词共享 SDK；
+- [ColorOS Live Lyrics Bridge](https://github.com/Andrea-lyz/ColorOS-Live-Lyrics-Bridge)：ColorOS 锁屏歌词接口；
 - [AndroidLiquidGlass / Backdrop](https://github.com/Kyant0/AndroidLiquidGlass)：Compose Multiplatform 流体玻璃效果。
 
 ## 许可证与第三方声明
