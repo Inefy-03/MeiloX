@@ -528,8 +528,8 @@ internal fun shouldSnapLyricScroll(
     val distance = (minOf(fromIndex, toIndex) until maxOf(fromIndex, toIndex)).count {
         lines[it] !is KaraokeLine.AccompanimentKaraokeLine
     }
-    // A screen containing N rows from index I ends at I + N - 1.
-    return visibleLineCount > 0 && distance >= visibleLineCount
+    // Keep two extra main lyric rows beyond the visible window within animation range.
+    return visibleLineCount > 0 && distance >= visibleLineCount + 2
 }
 
 internal fun isLyricLineVisible(

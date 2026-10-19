@@ -194,15 +194,19 @@ class LyricScrollPolicyTest {
     }
 
     @Test
-    fun theFirstLineOutsideTheScreenAlreadyRequiresASnap() {
-        assertEquals(true, shouldSnapLyricScroll(lines, 0, 2, 2))
-        assertEquals(true, shouldSnapLyricScroll(lines, 2, 0, 2))
+    fun theFirstTwoLinesOutsideTheScreenKeepTheirAnimation() {
+        val extendedLines = lines + lines
+        for (target in 2..3) {
+            assertFalse(shouldSnapLyricScroll(extendedLines, 0, target, 2))
+            assertFalse(shouldSnapLyricScroll(extendedLines, target, 0, 2))
+        }
     }
 
     @Test
-    fun jumpsBeyondOneScreenSnapInBothDirections() {
-        assertEquals(true, shouldSnapLyricScroll(lines, 0, 2, 1))
-        assertEquals(true, shouldSnapLyricScroll(lines, 2, 0, 1))
+    fun jumpsBeyondTheScreenAndTwoExtraLinesSnapInBothDirections() {
+        val extendedLines = lines + lines
+        assertTrue(shouldSnapLyricScroll(extendedLines, 0, 4, 2))
+        assertTrue(shouldSnapLyricScroll(extendedLines, 4, 0, 2))
     }
 
     @Test
