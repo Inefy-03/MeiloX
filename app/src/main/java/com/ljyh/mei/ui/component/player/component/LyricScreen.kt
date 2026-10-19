@@ -84,6 +84,7 @@ import com.ljyh.mei.utils.rememberEnumPreference
 import com.ljyh.mei.utils.rememberPreference
 import com.ljyh.mei.utils.setClipboard
 import com.mocharealm.accompanist.lyrics.core.model.ISyncedLine
+import com.mocharealm.accompanist.lyrics.core.model.karaoke.KaraokeAlignment
 import com.mocharealm.accompanist.lyrics.core.model.karaoke.KaraokeLine
 import com.mocharealm.accompanist.lyrics.core.model.synced.SyncedLine
 import kotlinx.coroutines.NonCancellable
@@ -92,6 +93,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.absoluteValue
 import kotlin.math.roundToInt
 
 @OptIn(UnstableApi::class)
@@ -210,10 +212,11 @@ fun LyricScreen(
                 key(System.identityHashCode(lyricData.lyricLine)) {
                     val player = playerConnection.player
                     val lines = lyricData.lyricLine.lines
+                    val accompanimentToMainMap = remember(lines) { lyricAccompanimentOwners(lines) }
                     // Warm the visible window near playback even before this host is shown.
                     val initialPosition = remember(player) { player.currentPosition.coerceAtLeast(0L) }
                     val listState = remember(player) {
-                        LazyListState(firstVisibleItemIndex = lyricFocusLineIndex(lines, initialPosition.toInt()))
+                        LazyListState(firstVisibleItemIndex = lyricFocusLineIndex(lines, initialPosition.toInt(), accompanimentToMainMap))
                     }
                     // Rows revealed by a within-screen jump need an existing placement
                     // to animate from. Keep a full window laid out beyond each edge.
@@ -225,7 +228,7 @@ fun LyricScreen(
                     val lyricAlpha = remember(player) { Animatable(0f) }
                     val focusLineVisible by remember(listState, lines, keepAliveZonePx) {
                         derivedStateOf {
-                            val focusIndex = lyricFocusLineIndex(lines, animatedPosition.toInt())
+                            val focusIndex = lyricFocusLineIndex(lines, animatedPosition.toInt(), accompanimentToMainMap)
                             val layout = listState.layoutInfo
                             layout.visibleItemsInfo.any { item ->
                                 item.index == focusIndex && isLyricLineVisible(
@@ -258,7 +261,7 @@ fun LyricScreen(
                             while (true) {
                                 manualScroll.resumeIfIdle(SystemClock.elapsedRealtime(), listState.isScrollInProgress)
                                 var position = player.currentPosition.coerceAtLeast(0L)
-                                var focusIndex = lyricFocusLineIndex(lines, position.toInt())
+                                var focusIndex = lyricFocusLineIndex(lines, position.toInt(), accompanimentToMainMap)
                                 var jumped = false
                                 if (!manualScroll.isBrowsing && !listState.isScrollInProgress &&
                                     (focusIndex != lastFocusIndex || manualScroll.returnToPlaybackPending)
@@ -289,7 +292,7 @@ fun LyricScreen(
                                         }
                                         // Seeking may continue while the old lyrics fade out.
                                         position = player.currentPosition.coerceAtLeast(0L)
-                                        focusIndex = lyricFocusLineIndex(lines, position.toInt())
+                                        focusIndex = lyricFocusLineIndex(lines, position.toInt(), accompanimentToMainMap)
                                         // A gesture may start during the fade. Leave it in control.
                                         if (!manualScroll.isBrowsing && !listState.isScrollInProgress) {
                                             if (snap) {
@@ -449,19 +452,71 @@ internal suspend fun runInterruptibleLyricJump(
     completed
 }
 
-internal fun lyricFocusLineIndex(lines: List<ISyncedLine>, positionMs: Int): Int {
-    // Match lyrics-ui's focus rules, including overlapping vocals and interludes.
-    val activeIndex = lines.indexOfFirst { line ->
-        val effectiveEnd = if (line is KaraokeLine.MainKaraokeLine) {
-            maxOf(line.end, line.accompanimentLines?.maxOfOrNull { it.end } ?: line.end)
-        } else {
-            line.end
+internal fun latestMainLyricLineIndices(lines: List<ISyncedLine>, positionMs: Int): List<Int> {
+    var leftIndex = -1
+    var rightIndex = -1
+    lines.forEachIndexed { index, line ->
+        if (line.start <= positionMs && line !is KaraokeLine.AccompanimentKaraokeLine) {
+            if ((line as? KaraokeLine)?.alignment == KaraokeAlignment.End) {
+                rightIndex = index
+            } else {
+                leftIndex = index
+            }
         }
-        positionMs >= line.start && positionMs < effectiveEnd
     }
-    if (activeIndex >= 0) return activeIndex
-    val nextIndex = lines.indexOfFirst { it.start > positionMs }
-    return if (nextIndex >= 0) nextIndex else lines.lastIndex.coerceAtLeast(0)
+    // Select before testing end times so a superseded long line cannot return in a gap.
+    return listOf(leftIndex, rightIndex).filter { it >= 0 }.sorted()
+}
+
+internal fun lyricAccompanimentOwners(lines: List<ISyncedLine>): Map<Int, Int> {
+    val mainIndices = lines.indices.filter { lines[it] !is KaraokeLine.AccompanimentKaraokeLine }
+    return buildMap {
+        lines.forEachIndexed { index, line ->
+            if (line !is KaraokeLine.AccompanimentKaraokeLine) return@forEachIndexed
+            val before = mainIndices.lastOrNull { it < index }
+            val after = mainIndices.firstOrNull { it > index }
+            val owner = when {
+                before == null -> after
+                after == null -> before
+                (line.start - lines[before].start).absoluteValue <=
+                    (lines[after].start - line.start).absoluteValue -> before
+                else -> after
+            }
+            if (owner != null) put(index, owner)
+        }
+    }
+}
+
+internal fun activeMainLyricLineIndices(
+    lines: List<ISyncedLine>,
+    positionMs: Int,
+    accompanimentToMainMap: Map<Int, Int> = lyricAccompanimentOwners(lines),
+): List<Int> = latestMainLyricLineIndices(lines, positionMs).filter { index ->
+    val line = lines[index]
+    val effectiveEnd = if (line is KaraokeLine.MainKaraokeLine) {
+        maxOf(line.end, line.accompanimentLines?.maxOfOrNull { it.end } ?: line.end)
+    } else {
+        line.end
+    }
+    positionMs < effectiveEnd || accompanimentToMainMap.any { (accompanimentIndex, owner) ->
+        val accompaniment = lines[accompanimentIndex]
+        owner == index && positionMs >= accompaniment.start && positionMs < accompaniment.end
+    }
+}
+
+internal fun lyricFocusLineIndex(
+    lines: List<ISyncedLine>,
+    positionMs: Int,
+    accompanimentToMainMap: Map<Int, Int> = lyricAccompanimentOwners(lines),
+): Int {
+    val activeIndex = activeMainLyricLineIndices(lines, positionMs, accompanimentToMainMap).firstOrNull()
+    if (activeIndex != null) return activeIndex
+    val nextIndex = lines.indexOfFirst {
+        it !is KaraokeLine.AccompanimentKaraokeLine && it.start > positionMs
+    }
+    return if (nextIndex >= 0) nextIndex else lines.indexOfLast {
+        it !is KaraokeLine.AccompanimentKaraokeLine
+    }.coerceAtLeast(0)
 }
 
 internal fun shouldSnapLyricScroll(

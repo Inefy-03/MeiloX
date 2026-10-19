@@ -82,7 +82,6 @@ import com.mocharealm.accompanist.lyrics.ui.utils.modifier.springPlacement
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
-import kotlin.math.absoluteValue
 
 private data class FocusState(
     val firstIndex: Int,
@@ -197,49 +196,7 @@ internal fun PlayerLyricsView(
     val timeProvider = remember { currentPosition }
 
     val accompanimentToMainMap = remember(lyrics.lines) {
-        val map = mutableMapOf<Int, Int>()
-        val mainLinesIndices = lyrics.lines.indices.filter { index ->
-            val line = lyrics.lines[index]
-            line !is KaraokeLine || line !is KaraokeLine.AccompanimentKaraokeLine
-        }
-        if (mainLinesIndices.isNotEmpty()) {
-            lyrics.lines.forEachIndexed { index, line ->
-                if (line is KaraokeLine && line is KaraokeLine.AccompanimentKaraokeLine) {
-                    // Find the main line that is closest in time (either the one just before or just after)
-                    val beforeIdx = mainLinesIndices.findLast { it <= index }
-                    val afterIdx = mainLinesIndices.find { it >= index }
-
-                    val anchorIndex = when {
-                        beforeIdx != null && afterIdx != null -> {
-                            val distBefore =
-                                (line.start - lyrics.lines[beforeIdx].start).absoluteValue
-                            val distAfter =
-                                (lyrics.lines[afterIdx].start - line.start).absoluteValue
-                            if (distBefore <= distAfter) beforeIdx else afterIdx
-                        }
-
-                        beforeIdx != null -> beforeIdx
-                        afterIdx != null -> afterIdx
-                        else -> mainLinesIndices.first()
-                    }
-                    map[index] = anchorIndex
-                }
-            }
-        }
-        map
-    }
-    val effectiveEndTimes = remember(lyrics.lines) {
-        IntArray(lyrics.lines.size) { index ->
-            val line = lyrics.lines[index]
-            var maxEnd = line.end
-
-            if (line is KaraokeLine.MainKaraokeLine) {
-                line.accompanimentLines?.forEach { acc ->
-                    if (acc.end > maxEnd) maxEnd = acc.end
-                }
-            }
-            maxEnd
-        }
+        lyricAccompanimentOwners(lyrics.lines)
     }
 
     val firstLine = lyrics.lines.firstOrNull()
@@ -251,30 +208,11 @@ internal fun PlayerLyricsView(
         }
     }
 
-    val lyricsFocusState by remember(lyrics, effectiveEndTimes, accompanimentToMainMap, haveDotsIntro) {
+    val lyricsFocusState by remember(lyrics, accompanimentToMainMap, haveDotsIntro) {
         derivedStateOf {
             val time = currentTimeMs()
-            val activeIndex = lyrics.lines.indices.find { idx ->
-                time >= lyrics.lines[idx].start && time < effectiveEndTimes[idx]
-            }
-
-            val first = if (activeIndex != null) {
-                activeIndex
-            } else {
-                val nextIdx = lyrics.lines.indexOfFirst { it.start > time }
-                if (nextIdx != -1) nextIdx else lyrics.lines.lastIndex
-            }
-
-            val base = lyrics.lines.indices.filter { index ->
-                time >= lyrics.lines[index].start && time < effectiveEndTimes[index]
-            }
-            val result = base.toMutableSet()
-            base.forEach { index ->
-                val line = lyrics.lines.getOrNull(index)
-                if (line is KaraokeLine && line is KaraokeLine.AccompanimentKaraokeLine) {
-                    accompanimentToMainMap[index]?.let { result.add(it) }
-                }
-            }
+            val activeIndices = activeMainLyricLineIndices(lyrics.lines, time, accompanimentToMainMap)
+            val first = lyricFocusLineIndex(lyrics.lines, time, accompanimentToMainMap)
 
             val activeInterludeIndex = lyrics.lines.indices.find { index ->
                 val line = lyrics.lines[index]
@@ -283,7 +221,7 @@ internal fun PlayerLyricsView(
             }
             val activeIntro = haveDotsIntro && time in 0 until (firstLine?.start ?: 0)
 
-            FocusState(first, result.toList().sorted(), activeInterludeIndex, activeIntro)
+            FocusState(first, activeIndices, activeInterludeIndex, activeIntro)
         }
     }
 
