@@ -97,6 +97,108 @@ class MediaUriProviderQualityTest {
     }
 
     @Test
+    fun unknownReportedLevelsFallBackWithoutPublishingOrCachingThem() = runBlocking {
+        for ((unsupportedLevel, actualFallback) in listOf("vivid" to "jyeffect", "future-surround" to "lossless")) {
+            val calls = mutableListOf<String>()
+            val provider = provider(catalog = "{}") { request ->
+                calls += request.level
+                when (request.level) {
+                    "dolby", "sky" -> source(unsupportedLevel, "unsupported-source")
+                    "jyeffect" -> source(actualFallback, "supported-source")
+                    else -> error("The supported fallback must retain the song")
+                }
+            }
+            val observed = mutableListOf<ResolvedMediaSource>()
+            provider.onSourceResolved = { _, source -> observed += source }
+
+            val resolved = provider.resolveMediaSource("1", "dolby")
+
+            assertEquals(listOf("dolby", "sky", "jyeffect"), calls)
+            assertEquals(actualFallback, resolved.actualQuality)
+            assertEquals("supported-source", resolved.sourceIdentity)
+            assertEquals(playbackCacheKey("1", actualFallback, "supported-source", 12345), resolved.cacheKey)
+            assertEquals(listOf(resolved), observed)
+            assertEquals(resolved, provider.resolveMediaSource("1", "dolby"))
+            assertEquals(listOf("dolby", "sky", "jyeffect"), calls)
+
+            assertEquals(resolved, provider.resolveMediaSource("1", "sky"))
+            assertEquals(listOf("dolby", "sky", "jyeffect", "sky"), calls)
+            assertTrue(observed.all { it.actualQuality == actualFallback })
+        }
+    }
+
+    @Test
+    fun unsupportedFullSourcesCannotBecomeAliasesOrAvailableQualities() = runBlocking {
+        val calls = Collections.synchronizedList(mutableListOf<String>())
+        var supported = false
+        val provider = provider(catalog = """{"sk":{"size":12345},"dl":{"size":23456}}""") { request ->
+            calls += request.level
+            if (supported) source(request.level, "${request.level}-source")
+            else source("vivid", "unsupported-source")
+        }
+        val observed = mutableListOf<ResolvedMediaSource>()
+        provider.onSourceResolved = { _, source -> observed += source }
+
+        try {
+            provider.resolveMediaSource("1", "dolby")
+            fail("An unsupported full source must not end quality fallback")
+        } catch (_: SourceNotFoundException) {
+            // Every attempted quality returned the same unsupported format.
+        }
+        assertEquals(playbackQualityFallbacks("dolby"), calls)
+        assertEquals(null, provider.resolvedMediaSource("1"))
+        assertTrue(observed.isEmpty())
+        assertTrue(provider.getAvailableMusicQualities("1", supportDolby = true).isEmpty())
+        assertTrue(provider.getAvailableDownloadQualities("1").isEmpty())
+
+        supported = true
+        calls.clear()
+        val resolved = provider.resolveMediaSource("1", "dolby")
+
+        assertEquals(listOf("dolby"), calls)
+        assertEquals("dolby", resolved.actualQuality)
+        assertEquals("dolby-source", resolved.sourceIdentity)
+        assertEquals(listOf(resolved), observed)
+    }
+
+    @Test
+    fun knownAndMissingReportedLevelsPreserveRequestedPlayback() = runBlocking {
+        for (requestedQuality in listOf("dolby", "jymaster")) {
+            for (reportedQuality in listOf(requestedQuality.uppercase(), " ")) {
+                val calls = mutableListOf<String>()
+                val provider = provider(catalog = "{}") { request ->
+                    calls += request.level
+                    source(reportedQuality, "supported-source")
+                }
+
+                val resolved = provider.resolveMediaSource("1", requestedQuality)
+
+                assertEquals(listOf(requestedQuality), calls)
+                assertEquals(requestedQuality, resolved.actualQuality)
+                assertEquals("supported-source", resolved.sourceIdentity)
+            }
+        }
+    }
+
+    @Test
+    fun unknownOrMislabeledDiskSourcesAreNotRememberedAsPlayable() = runBlocking {
+        val provider = provider(catalog = "{}") { error("No URL request is expected") }
+        val observed = mutableListOf<ResolvedMediaSource>()
+        provider.onSourceResolved = { _, source -> observed += source }
+        val unsupportedKey = playbackCacheKey("1", "vivid", "unsupported-source", 12345)
+        val mismatchedKey = playbackCacheKey("1", "lossless", "mislabeled-source", 12345)
+
+        provider.rememberCachedSource("1", "vivid", unsupportedKey, Uri.parse("https://example.test/vivid"))
+        provider.rememberCachedSource("1", "dolby", mismatchedKey, Uri.parse("https://example.test/mislabeled"))
+
+        assertTrue(provider.isRejectedCachedSource("1", unsupportedKey))
+        assertFalse(provider.isRejectedCachedSource("1", mismatchedKey))
+        assertEquals(null, provider.resolvedMediaSource("1"))
+        assertTrue(observed.isEmpty())
+        assertTrue(provider.getAvailableMusicQualities("1", supportDolby = true).isEmpty())
+    }
+
+    @Test
     fun failedBytesAreRejectedAcrossFreshQualityAliasesUntilExplicitRetry() = runBlocking {
         val calls = mutableListOf<String>()
         val provider = provider(catalog = "{}") { request ->

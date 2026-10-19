@@ -10,6 +10,10 @@ private const val PLAYBACK_CACHE_KEY_VERSION = "meilox-media-v3"
 internal fun normalizePlaybackQuality(quality: String): String =
     quality.trim().lowercase(Locale.ROOT).ifBlank { MusicQuality.EXHIGH.text }
 
+/** Only advertised player levels are supported; unknown server formats need a fallback. */
+internal fun isSupportedPlaybackQuality(quality: String?): Boolean =
+    !quality.isNullOrBlank() && MusicQuality.entries.any { it.text == normalizePlaybackQuality(quality) }
+
 /** Uses the server-reported level when available, otherwise the attempted level. */
 internal fun effectivePlaybackQuality(sourceQuality: String?, attemptedQuality: String): String =
     sourceQuality
@@ -90,6 +94,16 @@ internal fun playbackCacheKeyPrefix(mediaId: String, quality: String): String =
 /** Prefix shared by every playback cache entry for one song. */
 internal fun playbackCacheKeyPrefix(mediaId: String): String =
     "$PLAYBACK_CACHE_KEY_VERSION:${mediaId.trim()}:"
+
+/** Reads a supported level from this song's current cache-key format without trusting its alias. */
+internal fun cachedPlaybackQuality(mediaId: String, cacheKey: String): String? {
+    val prefix = playbackCacheKeyPrefix(mediaId)
+    if (!cacheKey.startsWith(prefix)) return null
+    val source = cacheKey.removePrefix(prefix)
+    val quality = source.substringBefore(':', missingDelimiterValue = "")
+    if (source.substringAfter(':', missingDelimiterValue = "").isBlank()) return null
+    return quality.takeIf(::isSupportedPlaybackQuality)?.let(::normalizePlaybackQuality)
+}
 
 /**
  * Builds a disk cache key for the exact server-returned source.

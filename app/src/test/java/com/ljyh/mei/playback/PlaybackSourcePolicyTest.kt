@@ -1,6 +1,7 @@
 package com.ljyh.mei.playback
 
 import androidx.media3.common.PlaybackException
+import com.ljyh.mei.constants.MusicQuality
 import com.ljyh.mei.data.model.SongUrl
 import com.ljyh.mei.data.model.isFullSourceFor
 import org.junit.Assert.assertEquals
@@ -22,6 +23,10 @@ class PlaybackSourcePolicyTest {
             playbackQualityFallbacks("jyeffect"),
         )
         assertEquals(listOf("standard"), playbackQualityFallbacks(" standard "))
+        assertEquals(
+            listOf("dolby", "sky", "jyeffect", "hires", "lossless", "exhigh", "standard"),
+            playbackQualityFallbacks("dolby"),
+        )
     }
 
     @Test
@@ -61,6 +66,35 @@ class PlaybackSourcePolicyTest {
     fun effectiveQualityUsesTheServerLevelWhenFallbackIsUsed() {
         assertEquals("lossless", effectivePlaybackQuality("LOSSLESS", "jymaster"))
         assertEquals("exhigh", effectivePlaybackQuality(null, "EXHIGH"))
+        assertEquals("dolby", effectivePlaybackQuality(" ", "DOLBY"))
+    }
+
+    @Test
+    fun supportedPlaybackLevelsExcludeUnrecognizedServerFormats() {
+        for (quality in MusicQuality.entries) {
+            assertTrue(isSupportedPlaybackQuality(quality.text))
+            assertTrue(isSupportedPlaybackQuality(" ${quality.text.uppercase()} "))
+        }
+        assertFalse(isSupportedPlaybackQuality(null))
+        assertFalse(isSupportedPlaybackQuality(" "))
+        assertFalse(isSupportedPlaybackQuality("vivid"))
+        assertFalse(isSupportedPlaybackQuality("future-surround"))
+    }
+
+    @Test
+    fun cachedQualityRequiresTheCurrentSongAndASupportedReportedLevel() {
+        for (quality in MusicQuality.entries) {
+            assertEquals(
+                quality.text,
+                cachedPlaybackQuality("123", playbackCacheKey("123", quality.text, "source", 10L)),
+            )
+        }
+        assertNull(cachedPlaybackQuality("123", playbackCacheKey("123", "vivid", "source", 10L)))
+        assertNull(cachedPlaybackQuality("123", playbackCacheKey("123", "future-surround", "source", 10L)))
+        assertNull(cachedPlaybackQuality("123", playbackCacheKey("456", "dolby", "source", 10L)))
+        assertNull(cachedPlaybackQuality("123", "meilox-media-v2:123:dolby:source"))
+        assertNull(cachedPlaybackQuality("123", "meilox-media-v3:123:dolby:"))
+        assertNull(cachedPlaybackQuality("123", "123"))
     }
 
     @Test

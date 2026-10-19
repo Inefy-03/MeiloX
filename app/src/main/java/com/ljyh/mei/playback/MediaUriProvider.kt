@@ -63,14 +63,22 @@ class MediaUriProvider @Inject constructor(
     internal var onSourceResolved: ((String, ResolvedMediaSource) -> Unit)? = null
 
     internal fun resolvedMediaSource(mediaId: String): ResolvedMediaSource? =
-        resolvedSources[mediaId]
+        resolvedSources[mediaId]?.takeIf { source ->
+            source.cacheKey == null ||
+                (isSupportedPlaybackQuality(source.actualQuality) &&
+                    cachedPlaybackQuality(mediaId, source.cacheKey) == normalizePlaybackQuality(source.actualQuality))
+        }
 
     internal fun rememberCachedSource(mediaId: String, quality: String, cacheKey: String, uri: Uri) {
+        val actualQuality = cachedPlaybackQuality(mediaId, cacheKey)
+            ?.takeIf { it == normalizePlaybackQuality(quality) }
+            ?: return
+        if (sourceIsRejected(mediaId, cacheKey.substringAfterLast(':'))) return
         rememberResolvedSource(
             mediaId,
             ResolvedMediaSource(
                 uri = uri,
-                actualQuality = normalizePlaybackQuality(quality),
+                actualQuality = actualQuality,
                 cacheKey = cacheKey,
                 sourceIdentity = cacheKey.substringAfterLast(':'),
             ),
@@ -78,7 +86,8 @@ class MediaUriProvider @Inject constructor(
     }
 
     internal fun isRejectedCachedSource(mediaId: String, cacheKey: String): Boolean =
-        sourceIsRejected(mediaId, cacheKey.substringAfterLast(':'))
+        cachedPlaybackQuality(mediaId, cacheKey) == null ||
+            sourceIsRejected(mediaId, cacheKey.substringAfterLast(':'))
 
     suspend fun resolveMediaUri(mediaId: String, quality: String): Uri =
         resolveMediaSource(mediaId, quality).uri
@@ -102,7 +111,9 @@ class MediaUriProvider @Inject constructor(
             val now = System.currentTimeMillis()
             val cached = urlCache[cacheKey]
             if (cached != null) {
-                if (cached.expiresAtMs > now && !sourceIsRejected(mediaId, cached.sourceIdentity)) {
+                if (cached.expiresAtMs > now && cached.hasSupportedQuality(mediaId) &&
+                    !sourceIsRejected(mediaId, cached.sourceIdentity)
+                ) {
                     return synchronized(qualityStateLock) {
                         ensureCurrentState(stateVersion)
                         rememberResolvedSource(mediaId, cached.toResolvedSource())
@@ -180,7 +191,7 @@ class MediaUriProvider @Inject constructor(
             availableQualityCache.remove(availabilityKey, cached)
         }
 
-        val knownSource = resolvedSources[mediaId].takeUnless { forDownload }
+        val knownSource = resolvedMediaSource(mediaId).takeUnless { forDownload }
             ?.takeIf { it.sourceIdentity != null && !sourceIsRejected(mediaId, it.sourceIdentity) }
         val knownQuality = MusicQuality.entries.firstOrNull { it.text == knownSource?.actualQuality }
             ?.takeIf { supportDolby || it != MusicQuality.DOLBY }
@@ -264,6 +275,7 @@ class MediaUriProvider @Inject constructor(
         val now = System.currentTimeMillis()
         val cached = urlCache["$mediaId:${quality.text}"]
         if (cached != null && cached.expiresAtMs > now &&
+            cached.hasSupportedQuality(mediaId) &&
             cached.actualQuality == quality.text &&
             (forDownload || !sourceIsRejected(mediaId, cached.sourceIdentity))
         ) {
@@ -314,6 +326,7 @@ class MediaUriProvider @Inject constructor(
     }
 
     private fun cacheEffectiveSource(mediaId: String, source: CachedUrl) {
+        if (!source.hasSupportedQuality(mediaId)) return
         urlCache["$mediaId:${source.actualQuality}"] = source
     }
 
@@ -335,9 +348,14 @@ class MediaUriProvider @Inject constructor(
         sourceIdentity = sourceIdentity,
     )
 
+    private fun CachedUrl.hasSupportedQuality(mediaId: String): Boolean =
+        isSupportedPlaybackQuality(actualQuality) &&
+            cachedPlaybackQuality(mediaId, cacheKey) == normalizePlaybackQuality(actualQuality)
+
     private fun SongUrl.Data.toCachedUrl(mediaId: String, attemptedQuality: String, now: Long): CachedUrl? {
         val sourceUrl = url ?: return null
         val actualQuality = effectivePlaybackQuality(level, attemptedQuality)
+        if (!isSupportedPlaybackQuality(actualQuality)) return null
         return CachedUrl(
             url = sourceUrl,
             expiresAtMs = expiresAt(expi, now),

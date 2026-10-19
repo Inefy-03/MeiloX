@@ -27,6 +27,8 @@ import com.ljyh.mei.data.network.Resource
 import com.ljyh.mei.data.network.api.EApiService
 import com.ljyh.mei.data.network.api.WeApiService
 import com.ljyh.mei.data.network.safeApiCall
+import com.ljyh.mei.playback.effectivePlaybackQuality
+import com.ljyh.mei.playback.isSupportedPlaybackQuality
 import com.ljyh.mei.playback.playbackQualityFallbacks
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -238,7 +240,9 @@ class PlaylistRepository(
 
                 responseCode = response.code
                 response.fullSourcesFor(requestedIds.toSet()).forEach { source ->
-                    fullSourcesById.putIfAbsent(source.id.toString(), source)
+                    if (isSupportedPlaybackQuality(effectivePlaybackQuality(source.level, attemptedQuality))) {
+                        fullSourcesById.putIfAbsent(source.id.toString(), source)
+                    }
                 }
                 if (fullSourcesById.size == requestedIds.size) break
             }
