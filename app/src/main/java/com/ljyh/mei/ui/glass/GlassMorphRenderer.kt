@@ -21,7 +21,6 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.graphics.Outline
-import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.Shape
@@ -31,6 +30,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.drawscope.inset
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.layer.CompositingStrategy
 import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
@@ -48,8 +48,8 @@ import kotlin.math.ceil
 import com.kyant.backdrop.Backdrop
 import com.ljyh.mei.ui.liquidglass.PressHighlightRenderer
 
-// These passes only carry an already blurred backdrop. Keep the moving outline, tint,
-// highlight and foreground at native resolution while reducing filter fill and bandwidth.
+// Sample and soft material fields share this scale. Keep moving outlines, optical
+// highlights and foreground at native resolution while reducing filter bandwidth.
 private const val DefaultGlassRenderScale = 0.5f
 
 @Composable
@@ -63,8 +63,9 @@ internal fun rememberGlassMorphRenderer(
     val appearance = LocalGlassAppearance.current
     val source = rememberGraphicsLayer()
     val refracted = rememberGraphicsLayer()
-    val renderer = remember(backdrop, density, blurRadius, renderScale, source, refracted, appearance) {
-        GlassMorphRenderer(backdrop, density, blurRadius, renderScale, source, refracted, appearance)
+    val material = rememberGraphicsLayer()
+    val renderer = remember(backdrop, density, blurRadius, renderScale, source, refracted, material, appearance) {
+        GlassMorphRenderer(backdrop, density, blurRadius, renderScale, source, refracted, material, appearance)
     }
     DisposableEffect(renderer, active) {
         // Keep shaders/layers across endpoints, but never reuse an old capture when a new
@@ -86,14 +87,14 @@ internal class GlassMorphRenderer(
     private val renderScale: Float,
     private val source: GraphicsLayer,
     private val refracted: GraphicsLayer,
+    private val material: GraphicsLayer,
     private val appearance: GlassAppearance,
 ) {
     private val shader = if (appearance.usesRefraction) RuntimeShader(TransitionRefractionShader) else null
     private val highlight = RuntimeShader(TransitionHighlightShader)
     private val highlightBrush = ShaderBrush(highlight)
     private val pressLight = PressHighlightRenderer()
-    private val materialPaint = Paint()
-    private val innerShadows = NavigationInnerShadowRenderer()
+    private val innerShadows = NavigationInnerShadowRenderer(renderScale = renderScale)
     private var recordedViewport: Rect? = null
     private val sourceEffect = if (appearance.usesBackdrop) run {
         val color = RenderEffect.createColorFilterEffect(
@@ -133,6 +134,7 @@ internal class GlassMorphRenderer(
         pressHighlightBounds: Rect? = null,
     ) = with(scope) {
         if (bounds.isEmpty || viewport.isEmpty) return@with
+        val recordedLayoutDirection = layoutDirection
         val outline = shape.createOutline(bounds.size, layoutDirection, this)
         val path = Path().apply {
             when (outline) {
@@ -154,7 +156,11 @@ internal class GlassMorphRenderer(
             refracted.clip = true
             source.renderEffect = sourceEffect
             val root = coordinates.findRootCoordinates()
-            source.record(bufferSize) {
+            source.record(
+                density = this@GlassMorphRenderer.density,
+                layoutDirection = recordedLayoutDirection,
+                size = bufferSize,
+            ) {
                 withTransform({
                     scale(renderScale, renderScale, Offset.Zero)
                     translate(-viewport.left, -viewport.top)
@@ -174,7 +180,11 @@ internal class GlassMorphRenderer(
                     }
                 }
             }
-            refracted.record(bufferSize) { drawLayer(source) }
+            refracted.record(
+                density = this@GlassMorphRenderer.density,
+                layoutDirection = recordedLayoutDirection,
+                size = bufferSize,
+            ) { drawLayer(source) }
             recordedViewport = viewport
         }
         refracted.renderEffect = if (shader != null) {
@@ -219,11 +229,41 @@ internal class GlassMorphRenderer(
             if (pressHighlightBounds != null) 0.5f * 0.38f * (pressHighlight?.progress ?: 0f) else 0f,
         )
         val useNavigationMaterial = navigationMaterial && appearance.usesBackdrop
-        clipGlassShape(bounds, radius, shape, path) {
-            // Keep the background and its inner shadows together, below the optical highlight.
-            val canvas = drawContext.canvas
-            if (useNavigationMaterial) canvas.saveLayer(bounds, materialPaint) else canvas.save()
-            try {
+        if (useNavigationMaterial) {
+            val nativeSize = size
+            val bufferSize = IntSize(
+                ceil(viewport.width * renderScale).toInt(),
+                ceil(viewport.height * renderScale).toInt(),
+            )
+            material.clip = true
+            material.compositingStrategy = CompositingStrategy.Offscreen
+            material.record(
+                density = this@GlassMorphRenderer.density,
+                layoutDirection = recordedLayoutDirection,
+                size = bufferSize,
+            ) {
+                // Material pixels map to (local + sourceOffset) * renderScale.
+                withTransform({
+                    scale(renderScale, renderScale, Offset.Zero)
+                    translate(sourceOffset.x, sourceOffset.y)
+                }) {
+                    val previousSize = drawContext.size
+                    drawContext.size = nativeSize
+                    try {
+                        withTransform({
+                            scale(1f / sampleScale.x, 1f / sampleScale.y, Offset.Zero)
+                            translate(-sourceOffset.x, -sourceOffset.y)
+                            scale(1f / renderScale, 1f / renderScale, Offset.Zero)
+                        }) { drawLayer(refracted) }
+                        drawNavigationGlassMaterial(tint, isDark, tintMultiplier)
+                        innerShadows.draw(this, shape, bounds, isDark)
+                    } finally {
+                        drawContext.size = previousSize
+                    }
+                }
+            }
+        } else {
+            clipGlassShape(bounds, radius, shape, path) {
                 if (appearance.usesBackdrop) {
                     withTransform({
                         scale(1f / sampleScale.x, 1f / sampleScale.y, Offset.Zero)
@@ -231,19 +271,20 @@ internal class GlassMorphRenderer(
                         scale(1f / renderScale, 1f / renderScale, Offset.Zero)
                     }) { drawLayer(refracted) }
                 }
-                if (useNavigationMaterial) {
-                    drawNavigationGlassMaterial(tint, isDark, tintMultiplier)
-                    innerShadows.draw(this, shape, bounds, isDark)
-                } else {
-                    drawRect(
-                        tint.copy(
-                            alpha = if (appearance.reduceTransparency) 1f
-                                else (tint.alpha * tintMultiplier).coerceIn(0f, 1f),
-                        ),
-                    )
-                }
-            } finally {
-                canvas.restore()
+                drawRect(
+                    tint.copy(
+                        alpha = if (appearance.reduceTransparency) 1f
+                            else (tint.alpha * tintMultiplier).coerceIn(0f, 1f),
+                    ),
+                )
+            }
+        }
+        clipGlassShape(bounds, radius, shape, path) {
+            if (useNavigationMaterial) {
+                withTransform({
+                    translate(-sourceOffset.x, -sourceOffset.y)
+                    scale(1f / renderScale, 1f / renderScale, Offset.Zero)
+                }) { drawLayer(material) }
             }
             drawPath(
                 path,

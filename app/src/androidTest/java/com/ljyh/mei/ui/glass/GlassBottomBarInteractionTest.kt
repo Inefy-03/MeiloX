@@ -20,7 +20,14 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.graphics.Paint
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toPixelMap
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -33,7 +40,9 @@ import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.kyant.backdrop.backdrops.emptyBackdrop
 import com.kyant.backdrop.backdrops.rememberCanvasBackdrop
+import com.kyant.capsule.ContinuousRoundedRectangle
 import com.kyant.shapes.Capsule
+import kotlin.math.abs
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -308,6 +317,170 @@ class GlassBottomBarInteractionTest {
                     }
                 }
             }
+        }
+    }
+
+    @Test
+    fun morphMaterialMatchesTheOriginalTileCompositionInBothAppearances() {
+        val dark = mutableStateOf(false)
+        val expanded = mutableStateOf(false)
+        val backingIndex = mutableStateOf(0)
+        val brightBackings = listOf(Color(0xFFF0F0F0), Color.White)
+        val capsuleBounds = Rect(12f, 80f, 132f, 128f)
+        val expandedBounds = Rect(8f, 12f, 136f, 196f)
+        compose.setContent {
+            val isDark = dark.value
+            val boundsDp = if (expanded.value) expandedBounds else capsuleBounds
+            val cornerRadiusDp = if (expanded.value) 18f else 24f
+            val backing = when (backingIndex.value) {
+                0 -> if (isDark) Color(0xFF343434) else Color(0xFFB3B3B3)
+                else -> brightBackings[backingIndex.value - 1]
+            }
+            val tint = defaultGlassColors(isDark).container
+            val tintMultiplier = 1.25f
+            val backdrop = rememberCanvasBackdrop { drawRect(backing) }
+            CompositionLocalProvider(
+                LocalGlassAppearance provides GlassAppearance(liquidGlassEnabled = false),
+            ) {
+                val renderer = rememberGlassMorphRenderer(backdrop, active = true, renderScale = 0.25f)
+                val referenceShadows = remember { NavigationInnerShadowRenderer(combineMasks = false) }
+                val materialPaint = remember { Paint() }
+                val coordinates = remember { mutableStateOf<LayoutCoordinates?>(null) }
+                DisposableEffect(referenceShadows) {
+                    onDispose { referenceShadows.release() }
+                }
+                Row {
+                    listOf(true, false).forEach { actual ->
+                        Canvas(
+                            Modifier.size(144.dp, 208.dp)
+                                .testTag(if (actual) "morphMaterialActual" else "morphMaterialReference")
+                                .onGloballyPositioned { if (actual) coordinates.value = it },
+                        ) {
+                            assertTrue("The material comparison requires GPU rendering", drawContext.canvas.nativeCanvas.isHardwareAccelerated)
+                            drawRect(Color(0xFF6C4769))
+                            val bounds = Rect(
+                                boundsDp.left.dp.toPx(), boundsDp.top.dp.toPx(),
+                                boundsDp.right.dp.toPx(), boundsDp.bottom.dp.toPx(),
+                            )
+                            val radius = cornerRadiusDp.dp.toPx()
+                            val shape = ContinuousRoundedRectangle(cornerRadiusDp.dp)
+                            if (actual) {
+                                val currentCoordinates = coordinates.value ?: return@Canvas
+                                val origin = currentCoordinates.positionInRoot()
+                                renderer.draw(
+                                    scope = this,
+                                    coordinates = currentCoordinates,
+                                    viewport = Rect(origin, size),
+                                    origin = origin,
+                                    bounds = bounds,
+                                    radius = radius,
+                                    shape = shape,
+                                    tint = tint,
+                                    tintMultiplier = tintMultiplier,
+                                    highlightAlpha = 0f,
+                                    navigationOutline = false,
+                                    navigationMaterial = true,
+                                    isDark = isDark,
+                                )
+                            } else {
+                                val outline = shape.createOutline(bounds.size, layoutDirection, this)
+                                val path = Path().apply {
+                                    when (outline) {
+                                        is Outline.Rectangle -> addRect(outline.rect)
+                                        is Outline.Rounded -> addRoundRect(outline.roundRect)
+                                        is Outline.Generic -> addPath(outline.path)
+                                    }
+                                    translate(bounds.topLeft)
+                                }
+                                // A uniform gray sample is unchanged by saturation and blur.
+                                // Keep the former saveLayer/tint/shadow order inside every tile.
+                                clipGlassShape(bounds, radius, shape, path) {
+                                    val canvas = drawContext.canvas
+                                    canvas.saveLayer(bounds, materialPaint)
+                                    try {
+                                        drawRect(backing)
+                                        drawNavigationGlassMaterial(tint, isDark, tintMultiplier)
+                                        referenceShadows.draw(this, shape, bounds, isDark)
+                                    } finally {
+                                        canvas.restore()
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        val scenarios = listOf(false, true).flatMap { isDark ->
+            listOf(false, true).flatMap { isExpanded ->
+                (0..brightBackings.size).map { backing -> Triple(isDark, isExpanded, backing) }
+            }
+        }
+        scenarios.forEach { (isDark, isExpanded, backing) ->
+            compose.runOnIdle {
+                dark.value = isDark
+                expanded.value = isExpanded
+                backingIndex.value = backing
+            }
+            compose.waitForIdle()
+            val actual = compose.onNodeWithTag("morphMaterialActual").captureToImage().toPixelMap()
+            val reference = compose.onNodeWithTag("morphMaterialReference").captureToImage().toPixelMap()
+            assertEquals(reference.width, actual.width)
+            assertEquals(reference.height, actual.height)
+            val bounds = if (isExpanded) expandedBounds else capsuleBounds
+            val radius = if (isExpanded) 18f else 24f
+            val scale = actual.width / 144f
+            val samples = listOf(
+                "face" to bounds.center,
+                "top rim" to Offset(bounds.center.x, bounds.top + 2f),
+                "upper inner band" to Offset(bounds.center.x, bounds.top + 10f),
+                "bottom rim" to Offset(bounds.center.x, bounds.bottom - 2f),
+                "left rim" to Offset(bounds.left + 2f, bounds.center.y),
+                "right rim" to Offset(bounds.right - 2f, bounds.center.y),
+                "corner interior" to Offset(bounds.left + radius * 0.75f, bounds.top + radius * 0.75f),
+                "outside" to Offset(bounds.left - 2f, bounds.center.y),
+            )
+            val label = "Morph material, expanded=$isExpanded, dark=$isDark, backing=$backing"
+            samples.forEach { (sample, point) ->
+                val x = (point.x * scale).toInt()
+                val y = (point.y * scale).toInt()
+                val expected = reference[x, y]
+                val observed = actual[x, y]
+                val tolerance = 2f / 255f
+                assertEquals("$label $sample red", expected.red, observed.red, tolerance)
+                assertEquals("$label $sample green", expected.green, observed.green, tolerance)
+                assertEquals("$label $sample blue", expected.blue, observed.blue, tolerance)
+                assertEquals("$label $sample alpha", expected.alpha, observed.alpha, tolerance)
+            }
+            // Check the whole silhouette too; only a small AA fringe may differ.
+            var totalError = 0f
+            var outliers = 0
+            val left = (bounds.left * scale).toInt()
+            val top = (bounds.top * scale).toInt()
+            val right = (bounds.right * scale).toInt()
+            val bottom = (bounds.bottom * scale).toInt()
+            for (y in top until bottom) {
+                for (x in left until right) {
+                    val expected = reference[x, y]
+                    val observed = actual[x, y]
+                    val error = maxOf(
+                        abs(expected.red - observed.red), abs(expected.green - observed.green),
+                        abs(expected.blue - observed.blue), abs(expected.alpha - observed.alpha),
+                    )
+                    totalError += error
+                    if (error > 4f / 255f) outliers++
+                }
+            }
+            val area = (right - left) * (bottom - top)
+            assertTrue("$label mean pixel error: ${totalError / area}", totalError / area <= 1f / 255f)
+            val fringePixels = 4 * ((right - left) + (bottom - top))
+            assertTrue("$label differing pixels: $outliers", outliers <= fringePixels)
+            fun tone(color: Color) = (color.red + color.green + color.blue) / 3f
+            val centerX = (bounds.center.x * scale).toInt()
+            val rim = reference[centerX, ((bounds.bottom - 2f) * scale).toInt()]
+            val band = reference[centerX, ((bounds.top + 10f) * scale).toInt()]
+            assertTrue("$label reference must contain visible inner shadows", tone(rim) - tone(band) >= 3f / 255f)
         }
     }
 
