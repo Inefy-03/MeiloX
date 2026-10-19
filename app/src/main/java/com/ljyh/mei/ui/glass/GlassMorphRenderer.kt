@@ -21,6 +21,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.Shape
@@ -71,6 +72,9 @@ internal fun rememberGlassMorphRenderer(
         if (active) renderer.invalidateRecording()
         onDispose { }
     }
+    DisposableEffect(renderer) {
+        onDispose { renderer.release() }
+    }
     return renderer
 }
 
@@ -88,6 +92,8 @@ internal class GlassMorphRenderer(
     private val highlight = RuntimeShader(TransitionHighlightShader)
     private val highlightBrush = ShaderBrush(highlight)
     private val pressLight = PressHighlightRenderer()
+    private val materialPaint = Paint()
+    private val innerShadows = NavigationInnerShadowRenderer()
     private var recordedViewport: Rect? = null
     private val sourceEffect = if (appearance.usesBackdrop) run {
         val color = RenderEffect.createColorFilterEffect(
@@ -100,6 +106,10 @@ internal class GlassMorphRenderer(
 
     fun invalidateRecording() {
         recordedViewport = null
+    }
+
+    fun release() {
+        innerShadows.release()
     }
 
     fun draw(
@@ -116,6 +126,8 @@ internal class GlassMorphRenderer(
         refractionHeight: Dp = 10.dp,
         refractionAmount: Dp = 24.dp,
         navigationOutline: Boolean = true,
+        navigationMaterial: Boolean = false,
+        isDark: Boolean = false,
         sampleScale: Offset = Offset(1f, 1f),
         pressHighlight: GlassPressHighlight? = null,
         pressHighlightBounds: Rect? = null,
@@ -206,20 +218,33 @@ internal class GlassMorphRenderer(
             "pressOpacity",
             if (pressHighlightBounds != null) 0.5f * 0.38f * (pressHighlight?.progress ?: 0f) else 0f,
         )
+        val useNavigationMaterial = navigationMaterial && appearance.usesBackdrop
         clipGlassShape(bounds, radius, shape, path) {
-            if (appearance.usesBackdrop) {
-                withTransform({
-                    scale(1f / sampleScale.x, 1f / sampleScale.y, Offset.Zero)
-                    translate(-sourceOffset.x, -sourceOffset.y)
-                    scale(1f / renderScale, 1f / renderScale, Offset.Zero)
-                }) { drawLayer(refracted) }
+            // Keep the background and its inner shadows together, below the optical highlight.
+            val canvas = drawContext.canvas
+            if (useNavigationMaterial) canvas.saveLayer(bounds, materialPaint) else canvas.save()
+            try {
+                if (appearance.usesBackdrop) {
+                    withTransform({
+                        scale(1f / sampleScale.x, 1f / sampleScale.y, Offset.Zero)
+                        translate(-sourceOffset.x, -sourceOffset.y)
+                        scale(1f / renderScale, 1f / renderScale, Offset.Zero)
+                    }) { drawLayer(refracted) }
+                }
+                if (useNavigationMaterial) {
+                    drawNavigationGlassMaterial(tint, isDark, tintMultiplier)
+                    innerShadows.draw(this, shape, bounds, isDark)
+                } else {
+                    drawRect(
+                        tint.copy(
+                            alpha = if (appearance.reduceTransparency) 1f
+                                else (tint.alpha * tintMultiplier).coerceIn(0f, 1f),
+                        ),
+                    )
+                }
+            } finally {
+                canvas.restore()
             }
-            drawRect(
-                tint.copy(
-                    alpha = if (appearance.reduceTransparency) 1f
-                        else (tint.alpha * tintMultiplier).coerceIn(0f, 1f),
-                ),
-            )
             drawPath(
                 path,
                 highlightBrush,
@@ -256,8 +281,10 @@ internal fun rememberMorphingNavigationGlass(
     active: Boolean,
     shape: Shape,
     tint: Color,
+    navigationMaterial: Boolean,
     pressProgress: () -> Float,
     layerBlock: GraphicsLayerScope.() -> Unit,
+    isDark: Boolean = false,
     tintMultiplier: Float = 1.25f,
     lensSource: Boolean = false,
     captureWidth: Dp? = null,
@@ -303,6 +330,8 @@ internal fun rememberMorphingNavigationGlass(
                     refractionHeight = if (lensSource) 24.dp * press else 10.dp,
                     refractionAmount = if (lensSource) 28.dp * press else 24.dp,
                     navigationOutline = !lensSource,
+                    navigationMaterial = navigationMaterial,
+                    isDark = isDark,
                     sampleScale = sampleScale,
                 )
             }

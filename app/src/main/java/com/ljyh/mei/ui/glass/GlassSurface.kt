@@ -13,6 +13,7 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -372,11 +373,50 @@ private fun DrawScope.drawGlassSurfaceColor(
     drawRect(surfaceColor.copy(alpha = surfaceColor.alpha * if (enabled) 1f else 0.8f))
 }
 
+internal const val LightNavigationContainerAlphaScale = 0.5f
+
+/** Adjusts only the sampled image, before the neutral tint and foreground are drawn. */
+internal fun DrawScope.drawLightNavigationBackdrop() {
+    drawRect(Color(0xFFF8F8F8).copy(alpha = 0.2f), blendMode = BlendMode.Luminosity)
+    drawRect(Color(0xFF444444).copy(alpha = 0.1f), blendMode = BlendMode.Plus)
+}
+
+/** Neutral navigation material, applied to the sampled image before its inner shadows. */
+internal fun DrawScope.drawNavigationGlassMaterial(
+    containerColor: Color,
+    isDark: Boolean,
+    containerAlphaMultiplier: Float = 1.25f,
+) {
+    if (isDark) {
+        drawRect(Color(0xFF999999).copy(alpha = 0.17f), blendMode = BlendMode.Luminosity)
+    } else {
+        drawLightNavigationBackdrop()
+    }
+    drawRect(
+        containerColor.copy(
+            alpha = containerColor.alpha * containerAlphaMultiplier.coerceAtLeast(0f) *
+                if (isDark) 0.6f else LightNavigationContainerAlphaScale,
+        ),
+    )
+}
+
+@Composable
+internal fun rememberNavigationInnerShadows(enabled: Boolean): NavigationInnerShadowRenderer? {
+    val renderer = remember(enabled) { if (enabled) NavigationInnerShadowRenderer() else null }
+    DisposableEffect(renderer) {
+        onDispose { renderer?.release() }
+    }
+    return renderer
+}
+
 /** Shared outer navigation-glass material used by the expanded nav and floating controls. */
 internal fun Modifier.navigationGlassBackground(
     backdrop: Backdrop,
     shape: () -> Shape,
     containerColor: Color,
+    navigationMaterial: Boolean,
+    innerShadows: NavigationInnerShadowRenderer?,
+    isDark: Boolean = false,
     containerAlphaMultiplier: Float = 1.25f,
     surfaceOverlay: (DrawScope.() -> Unit)? = null,
     pressProgress: Float = 0f,
@@ -426,6 +466,9 @@ internal fun Modifier.navigationGlassBackground(
                 drawRect(containerColor.copy(alpha = 1f))
             } else if (surfaceOverlay != null) {
                 surfaceOverlay()
+            } else if (navigationMaterial && sampleBackdrop && appearance.usesBackdrop) {
+                drawNavigationGlassMaterial(containerColor, isDark, containerAlphaMultiplier)
+                innerShadows?.draw(this, shape(), isDark = isDark)
             } else {
                 drawRect(
                     containerColor.copy(
@@ -464,6 +507,11 @@ fun GlassSurface(
     val colors = LocalGlassColors.current
     val appearance = LocalGlassAppearance.current
     val isLight = !colors.isDark
+    val navigationMaterial = emphasis == GlassEmphasis.Regular &&
+        navigationSurfaceColor == null && sampleBackdrop && appearance.usesBackdrop
+    val innerShadows = rememberNavigationInnerShadows(
+        style == GlassSurfaceStyle.Navigation && navigationMaterial,
+    )
     val brightness = LocalGlassSurfaceBrightness.current.coerceIn(0f, 1f)
     val animationScope = rememberCoroutineScope()
     val interactiveHighlight = remember(animationScope) {
@@ -518,6 +566,8 @@ fun GlassSurface(
             active = morphing,
             shape = shape,
             tint = navigationSurfaceColor ?: surfaceColor,
+            navigationMaterial = navigationMaterial,
+            isDark = colors.isDark,
             pressProgress = { pressProgressState.value },
             layerBlock = dragScaleLayerBlock,
             tintMultiplier = navigationSurfaceAlphaMultiplier,
@@ -536,6 +586,8 @@ fun GlassSurface(
             containerColor,
             emphasis,
             isLight,
+            navigationMaterial,
+            innerShadows,
             brightness,
             enabled,
             navigationSurfaceAlphaMultiplier,
@@ -548,6 +600,9 @@ fun GlassSurface(
                 backdrop = surfaceBackdrop,
                 shape = shapeProvider,
                 containerColor = containerColor,
+                navigationMaterial = navigationMaterial,
+                innerShadows = innerShadows,
+                isDark = colors.isDark,
                 containerAlphaMultiplier = navigationSurfaceAlphaMultiplier,
                 surfaceOverlay = if (emphasis == GlassEmphasis.Prominent) {
                     {

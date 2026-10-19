@@ -167,6 +167,8 @@ fun <T> GlassBottomBar(
     val colors = LocalGlassColors.current
     val appearance = LocalGlassAppearance.current
     val isLight = !colors.isDark
+    val navigationInnerShadows = rememberNavigationInnerShadows(appearance.usesBackdrop)
+    val hiddenInnerShadows = rememberNavigationInnerShadows(appearance.usesRefraction)
     val containerColor = colors.container
     val tabsBackdrop = rememberLayerBackdrop()
     val indicatorBackdrop = rememberCombinedBackdrop(backdrop, tabsBackdrop)
@@ -374,12 +376,16 @@ fun <T> GlassBottomBar(
             active = morphing,
             shape = Capsule(),
             tint = containerColor,
+            navigationMaterial = appearance.usesBackdrop,
+            isDark = colors.isDark,
             pressProgress = { pressProgressState.value },
             layerBlock = pressLayerBlock,
         )
         val navigationGlassModifier = if (morphing) morphingNavigationGlass else remember(
             backdrop,
             containerColor,
+            isLight,
+            navigationInnerShadows,
             pressProgressState,
             pressLayerBlock,
             appearance,
@@ -388,6 +394,9 @@ fun <T> GlassBottomBar(
                 backdrop = backdrop,
                 shape = { Capsule() },
                 containerColor = containerColor,
+                navigationMaterial = appearance.usesBackdrop,
+                innerShadows = navigationInnerShadows,
+                isDark = colors.isDark,
                 pressProgressState = pressProgressState,
                 layerBlock = pressLayerBlock,
                 appearance = appearance,
@@ -401,6 +410,8 @@ fun <T> GlassBottomBar(
             active = morphing && appearance.usesRefraction,
             shape = Capsule(),
             tint = containerColor,
+            navigationMaterial = appearance.usesBackdrop,
+            isDark = colors.isDark,
             pressProgress = { pressProgressState.value },
             layerBlock = pressLayerBlock,
             tintMultiplier = 1f,
@@ -409,6 +420,9 @@ fun <T> GlassBottomBar(
         val hiddenBackdropModifier = if (morphing) morphingHiddenGlass else remember(
             backdrop,
             containerColor,
+            isLight,
+            hiddenInnerShadows,
+            appearance,
             pressProgressState,
             pressLayerBlock,
         ) {
@@ -431,7 +445,14 @@ fun <T> GlassBottomBar(
                         Highlight.Default.copy(alpha = 0.94f * pressProgressState.value)
                     },
                     layerBlock = pressLayerBlock,
-                    onDrawSurface = { drawRect(containerColor) },
+                    onDrawSurface = {
+                        if (appearance.usesBackdrop) {
+                            drawNavigationGlassMaterial(containerColor, colors.isDark, 1f)
+                            hiddenInnerShadows?.draw(this, Capsule(), isDark = colors.isDark)
+                        } else {
+                            drawRect(containerColor)
+                        }
+                    },
                 )
         }
         val expandedIndicatorVisibilityState = remember(compactState) {
