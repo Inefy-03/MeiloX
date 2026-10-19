@@ -225,9 +225,10 @@ fun AppleMusicPlayer(
         val normalStart = (maxWidthPx - normalSize) / 2
 
         // C. Header (Top Left Small)
+        val headerPaddingH = PlayerHorizontalPadding + 8.dp
         val headerSize = with(density) { 46.dp.toPx() }
         val headerTop = topSafeArea + with(density) { 40.dp.toPx() }
-        val headerStart = with(density) { PlayerHorizontalPadding.toPx() }
+        val headerStart = with(density) { headerPaddingH.toPx() }
         val headerRadius = with(density) { 4.dp.toPx() }
 
         val normalBounds = Rect(normalStart, normalTop, normalStart + normalSize, normalTop + normalSize)
@@ -327,8 +328,8 @@ fun AppleMusicPlayer(
                         LyricScreen(
                             lyricData = lyricLine,
                             active = showLyrics,
-                            // The header ends 12.dp from the edge, with 10.dp inside Title.
-                            sourceBadgeEndOffset = PlayerHorizontalPadding - 22.dp,
+                            // Keep the source badge aligned with the header's More button.
+                            sourceBadgeEndOffset = PlayerHorizontalPadding - headerPaddingH,
                             sourceBadgeAnchor = albumMoreAnchor,
                             sourceBadgeAnchorProgress = sourceBadgeAnchorProgress,
                             playerConnection = stateContainer.playerConnection,
@@ -366,8 +367,10 @@ fun AppleMusicPlayer(
 
                 // Mode C: Header Info
                 if (mediaMetadata != null) {
+                    // Account for the cover gap and Title's internal 10.dp end padding.
                     val headerTextWidth =
-                        screenWidth - with(density) { (headerStart + headerSize).toDp() } - 24.dp
+                        screenWidth - with(density) { (headerStart + headerSize).toDp() } -
+                            12.dp - headerPaddingH + 10.dp
 
                     Box(
                         modifier = Modifier
