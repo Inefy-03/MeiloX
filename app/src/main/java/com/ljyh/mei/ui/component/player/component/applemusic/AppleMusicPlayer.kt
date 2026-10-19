@@ -24,12 +24,14 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
@@ -226,6 +228,10 @@ fun AppleMusicPlayer(
 
         // C. Header (Top Left Small)
         val headerPaddingH = PlayerHorizontalPadding + 8.dp
+        val sourceBadgeBottomPadding = maxOf(
+            headerPaddingH,
+            with(density) { WindowInsets.navigationBars.getBottom(this).toDp() },
+        ) - 16.dp // The hidden controls spacer already contributes 16.dp.
         val headerSize = with(density) { 46.dp.toPx() }
         val headerTop = topSafeArea + with(density) { 40.dp.toPx() }
         val headerStart = with(density) { headerPaddingH.toPx() }
@@ -328,15 +334,16 @@ fun AppleMusicPlayer(
                         LyricScreen(
                             lyricData = lyricLine,
                             active = showLyrics,
-                            // Keep the source badge aligned with the header's More button.
-                            sourceBadgeEndOffset = PlayerHorizontalPadding - headerPaddingH,
+                            contentPadding = PaddingValues(horizontal = PlayerHorizontalPadding),
+                            // Keep the badge inside its host while matching the header's More button.
+                            sourceBadgeEndOffset = -headerPaddingH,
+                            sourceBadgeBottomPadding = sourceBadgeBottomPadding,
                             sourceBadgeAnchor = albumMoreAnchor,
                             sourceBadgeAnchorProgress = sourceBadgeAnchorProgress,
                             playerConnection = stateContainer.playerConnection,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .weight(1f)
-                                .padding(horizontal = PlayerHorizontalPadding),
+                                .weight(1f),
                             onClick = {
                                 mediaMetadata?.let {
                                     if (overlayHandler.currentOverlayValue is OverlayState.None) {
