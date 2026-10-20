@@ -66,7 +66,8 @@ import com.kyant.backdrop.backdrops.emptyBackdrop
 import com.ljyh.mei.R
 import com.ljyh.mei.data.model.MediaMetadata
 import com.ljyh.mei.ui.component.player.FloatingLyricsPipContent
-import com.ljyh.mei.ui.component.player.component.applemusic.playerLyricsFade
+import com.ljyh.mei.ui.component.player.component.applemusic.playerAdditiveBlend
+import com.ljyh.mei.ui.component.player.component.applemusic.playerContentFade
 import com.ljyh.mei.ui.component.player.component.sheet.LyricSelectionSheet
 import com.ljyh.mei.ui.glass.IosModalSheet
 import com.ljyh.mei.ui.glass.LocalBlurBackdrop
@@ -201,7 +202,7 @@ class PlayerLyricsRenderingTest {
                         .background(background)
                         .testTag("lyrics-fade-background")
                 ) {
-                    Box(Modifier.fillMaxSize().playerLyricsFade(visibility)) {
+                    Box(Modifier.fillMaxSize().playerContentFade(visibility)) {
                         PlayerLyricsView(
                             listState = rememberLazyListState(),
                             lyrics = SyncedLyrics(lines = listOf(line)),
@@ -243,6 +244,40 @@ class PlayerLyricsRenderingTest {
             assertEquals("Red contribution at visibility $alpha", background.red + contribution, glyph.red, tolerance)
             assertEquals("Green contribution at visibility $alpha", background.green + contribution, glyph.green, tolerance)
             assertEquals("Blue contribution at visibility $alpha", background.blue + contribution, glyph.blue, tolerance)
+        }
+    }
+
+    @Test
+    fun playerControlsKeepAdditiveBlendingThroughoutTheFade() {
+        val visibility = mutableStateOf(0f)
+        val background = Color(0.10f, 0.25f, 0.40f)
+        compose.setContent {
+            MaterialTheme {
+                Box(
+                    Modifier.width(96.dp).height(96.dp)
+                        .background(background)
+                        .testTag("controls-fade-background"),
+                ) {
+                    Box(Modifier.fillMaxSize().playerContentFade(visibility)) {
+                        Box(
+                            Modifier.fillMaxSize().playerAdditiveBlend()
+                                .background(Color.White.copy(alpha = 0.4f)),
+                        )
+                    }
+                }
+            }
+        }
+
+        for (alpha in listOf(0f, 0.25f, 0.5f, 0.75f, 1f, 0.5f, 0.25f, 1f, 0f)) {
+            compose.runOnIdle { visibility.value = alpha }
+            val pixels = compose.onNodeWithTag("controls-fade-background")
+                .captureToImage().toPixelMap()
+            val center = pixels[pixels.width / 2, pixels.height / 2]
+            val contribution = 0.4f * alpha
+            // SrcOver would attenuate the colored background as the control fades in.
+            assertEquals("Red contribution at visibility $alpha", background.red + contribution, center.red, 0.015f)
+            assertEquals("Green contribution at visibility $alpha", background.green + contribution, center.green, 0.015f)
+            assertEquals("Blue contribution at visibility $alpha", background.blue + contribution, center.blue, 0.015f)
         }
     }
 

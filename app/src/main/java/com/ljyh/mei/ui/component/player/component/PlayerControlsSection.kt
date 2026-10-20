@@ -22,6 +22,7 @@ import com.ljyh.mei.constants.PlayerStyleKey
 import com.ljyh.mei.constants.ProgressBarStyle
 import com.ljyh.mei.constants.ProgressBarStyleKey
 import com.ljyh.mei.ui.component.player.component.applemusic.AppleMusicDimensions
+import com.ljyh.mei.ui.component.player.component.applemusic.playerAdditiveBlend
 import com.ljyh.mei.playback.PlayerConnection
 import com.ljyh.mei.utils.rememberEnumPreference
 
@@ -74,7 +75,7 @@ fun PlayerControlsSection(
         if (!isCompact) {
             Spacer(Modifier.height(spacerHeight))
             PlayerActionToolbar(
-                modifier = Modifier.padding(horizontal = PlayerHorizontalPadding),
+                modifier = Modifier.padding(horizontal = PlayerHorizontalPadding).playerAdditiveBlend(),
                 onLyricClick = onLyricClick,
                 onPlaylistClick = onPlaylistClick,
                 onSleepTimerClick = onSleepTimerClick,
@@ -114,6 +115,7 @@ private fun PlayerProgressSection(
     } else PlayerHorizontalPadding + 8.dp
     val modifier = Modifier
         .fillMaxWidth()
+        .playerAdditiveBlend()
         .padding(horizontal = progressPadding)
     val seek: (Long) -> Unit = { playerConnection.player.seekTo(it) }
     if (progressBarStyle == ProgressBarStyle.LINEAR) {

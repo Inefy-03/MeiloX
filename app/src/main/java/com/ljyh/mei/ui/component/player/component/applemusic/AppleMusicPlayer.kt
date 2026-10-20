@@ -7,8 +7,12 @@ import androidx.annotation.OptIn
 import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -59,6 +63,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
@@ -295,6 +300,7 @@ fun AppleMusicPlayer(
                         .align(Alignment.TopCenter)
                         .padding(top = with(density) { topSafeArea.toDp() } + AppleMusicDimensions.handleTopInset)
                         .size(width = 58.dp, height = 4.dp)
+                        .playerAdditiveBlend()
                         .background(
                             Color.White.copy(alpha = if (isDark) 0.48f else 0.62f),
                             Capsule(),
@@ -330,7 +336,7 @@ fun AppleMusicPlayer(
                                 if (showLyrics || lyricVisibilityAlpha.value > 0f) placeable.place(0, 0)
                             }
                         }
-                        .playerLyricsFade(lyricVisibilityAlpha)
+                        .playerContentFade(lyricVisibilityAlpha)
                         .then(if (showLyrics && sheetExpanded) Modifier else Modifier.clearAndSetSemantics { }),
                 ) {
                     Column(Modifier.fillMaxSize()) {
@@ -492,13 +498,20 @@ fun AppleMusicPlayer(
                 ) {
                     AnimatedVisibility(
                         visible = controlsShown,
-                        enter = slideInVertically { it } + fadeIn(),
-                        exit = slideOutVertically { it } + fadeOut(),
+                        enter = slideInVertically { it },
+                        exit = slideOutVertically { it },
                     ) {
+                        val controlsAlpha = transition.animateFloat(
+                            transitionSpec = { spring(stiffness = Spring.StiffnessMediumLow) },
+                            label = "PlayerControlsOpacity",
+                        ) {
+                            if (it == EnterExitState.Visible) 1f else 0f
+                        }
                         DisposableEffect(Unit) {
                             onDispose { progressTrackTopInRoot = null }
                         }
-                        Box(Modifier.onSizeChanged { controlsHeightPx = it.height }) {
+                        Box(Modifier.playerContentFade(controlsAlpha)
+                            .onSizeChanged { controlsHeightPx = it.height }) {
                             PlayerControlsSection(
                                 position = { stateContainer.sliderPosition.toLong() },
                                 duration = { stateContainer.duration },
@@ -599,10 +612,15 @@ fun AppleMusicPlayer(
     }
 }
 
-internal fun Modifier.playerLyricsFade(alpha: State<Float>): Modifier = graphicsLayer {
+internal fun Modifier.playerContentFade(alpha: State<Float>): Modifier = graphicsLayer {
     this.alpha = alpha.value
     // Keep descendant Plus blending connected to the background during the fade.
     compositingStrategy = CompositingStrategy.ModulateAlpha
+}
+
+internal fun Modifier.playerAdditiveBlend(): Modifier = graphicsLayer {
+    blendMode = BlendMode.Plus
+    compositingStrategy = CompositingStrategy.Offscreen
 }
 
 /** Unplace hidden endpoints without changing their measured geometry. */
@@ -614,7 +632,7 @@ private fun Modifier.playerInfoVisibility(visible: Boolean): Modifier =
         }
     }.then(if (visible) Modifier else Modifier.clearAndSetSemantics { })
 
-private fun Modifier.playerInfoMotion(
+internal fun Modifier.playerInfoMotion(
     opacity: State<Float>,
     progress: State<Float>,
     albumOrigin: Offset,
@@ -626,5 +644,6 @@ private fun Modifier.playerInfoMotion(
     translationY = offset.y
     alpha = opacity.value
     clip = false
-    compositingStrategy = CompositingStrategy.ModulateAlpha
+    blendMode = BlendMode.Plus
+    compositingStrategy = CompositingStrategy.Offscreen
 }
