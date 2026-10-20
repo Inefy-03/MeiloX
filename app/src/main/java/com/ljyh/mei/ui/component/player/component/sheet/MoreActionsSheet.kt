@@ -28,6 +28,7 @@ import com.ljyh.mei.ui.glass.SfIcon
 import com.ljyh.mei.ui.glass.SfSymbol
 import com.ljyh.mei.ui.local.LocalPlayerConnection
 import com.ljyh.mei.ui.model.MoreAction
+import com.ljyh.mei.ui.model.PlayerAction
 import com.ljyh.mei.ui.model.SortOrder
 
 @Composable
@@ -56,7 +57,7 @@ fun MoreActionsSheet(
                             onLongClick = onFindLyricsLongClick,
                         ) {
                             SfIcon(
-                                systemName = "bubble.left",
+                                systemName = PlayerAction.LYRICS.systemName,
                                 contentDescription = stringResource(R.string.player_find_lyrics),
                             )
                         }

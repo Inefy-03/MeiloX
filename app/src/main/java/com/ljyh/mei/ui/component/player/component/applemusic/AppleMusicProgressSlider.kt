@@ -61,6 +61,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ljyh.mei.ui.component.player.component.PlayerQualityDropdown
 import com.ljyh.mei.ui.local.LocalPlayerConnection
+import com.ljyh.mei.ui.theme.LocalInterfaceLetterSpacing
 import com.ljyh.mei.utils.TimeUtils.makeTimeString
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -234,7 +235,7 @@ internal fun AppleMusicProgressSlider(
         val textStyle = MaterialTheme.typography.labelSmall.copy(
             fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
-            letterSpacing = 0.3.sp,
+            letterSpacing = LocalInterfaceLetterSpacing.current,
         )
         val timeTextStyle = textStyle.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold)
         Box(
