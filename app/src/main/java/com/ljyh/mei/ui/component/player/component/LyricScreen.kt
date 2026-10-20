@@ -121,11 +121,11 @@ fun LyricScreen(
         LyricTextSize.Size28
     )
     val (normalLyricTextBold, _) = rememberPreference(NormalLyricTextBoldKey, true)
-    val (accompanimentLyricTextSize, _) = rememberEnumPreference(
+    val (translationLyricTextSize, _) = rememberEnumPreference(
         AccompanimentLyricTextSizeKey,
         LyricTextSize.Size18
     )
-    val (accompanimentLyricTextBold, _) = rememberPreference(AccompanimentLyricTextBoldKey, true)
+    val (translationLyricTextBold, _) = rememberPreference(AccompanimentLyricTextBoldKey, true)
     val manualScroll = remember(lyricData.lyricLine, playerConnection.player) {
         LyricManualScrollState()
     }
@@ -388,8 +388,13 @@ fun LyricScreen(
                                 textMotion = TextMotion.Animated,
                             ),
                             accompanimentLineTextStyle = LocalTextStyle.current.copy(
-                                fontSize = accompanimentLyricTextSize.text.sp,
-                                fontWeight = if (accompanimentLyricTextBold) FontWeight.Bold else FontWeight.Normal,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                textMotion = TextMotion.Animated,
+                            ),
+                            translationLineTextStyle = LocalTextStyle.current.copy(
+                                fontSize = translationLyricTextSize.text.sp,
+                                fontWeight = if (translationLyricTextBold) FontWeight.Bold else FontWeight.Normal,
                                 textMotion = TextMotion.Animated,
                             ),
                             offset = 48.dp,

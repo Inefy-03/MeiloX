@@ -39,6 +39,7 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -126,11 +127,14 @@ internal fun PlayerLyricsView(
     blurDelta: Float = 3f,
     showDebugRectangles: Boolean = false,
     placementGeneration: Int = 0,
+    translationLineTextStyle: TextStyle = LocalTextStyle.current,
 ) {
     val stableNormalTextStyle = remember(normalLineTextStyle) { normalLineTextStyle }
     val stableAccompanimentTextStyle =
         remember(accompanimentLineTextStyle) { accompanimentLineTextStyle }
     val stablePhoneticTextStyle = remember(phoneticTextStyle) { phoneticTextStyle }
+    // Theme line heights are fixed in sp and can be smaller than the selected font.
+    val translationTextStyle = translationLineTextStyle.copy(lineHeight = 1.2.em)
     val stableOffset = remember(offset) { offset }
     val stableBlendMode = remember(blendMode) { blendMode }
 
@@ -367,20 +371,23 @@ internal fun PlayerLyricsView(
                                                 textMeasurer,
                                                 precalculatedLayouts
                                             ) {
-                                                KaraokeLineText(
-                                                    line = line,
-                                                    currentTimeProvider = timeProvider,
-                                                    normalLineTextStyle = stableNormalTextStyle,
-                                                    accompanimentLineTextStyle = stableAccompanimentTextStyle,
-                                                    phoneticTextStyle = stablePhoneticTextStyle,
-                                                    activeColor = textColor,
-                                                    blendMode = stableBlendMode,
-                                                    showDebugRectangles = showDebugRectangles,
-                                                    showTranslation = showTranslation,
-                                                    showPhonetic = showPhonetic,
-                                                    precalculatedLayouts = precalculatedLayouts,
-                                                    textMeasurer = textMeasurer
-                                                )
+                                                // Translation Text inherits this style; primary and phonetic text use explicit styles.
+                                                CompositionLocalProvider(LocalTextStyle provides translationTextStyle) {
+                                                    KaraokeLineText(
+                                                        line = line,
+                                                        currentTimeProvider = timeProvider,
+                                                        normalLineTextStyle = stableNormalTextStyle,
+                                                        accompanimentLineTextStyle = stableAccompanimentTextStyle,
+                                                        phoneticTextStyle = stablePhoneticTextStyle,
+                                                        activeColor = textColor,
+                                                        blendMode = stableBlendMode,
+                                                        showDebugRectangles = showDebugRectangles,
+                                                        showTranslation = showTranslation,
+                                                        showPhonetic = showPhonetic,
+                                                        precalculatedLayouts = precalculatedLayouts,
+                                                        textMeasurer = textMeasurer
+                                                    )
+                                                }
                                             }
                                         }
                                     }
@@ -396,13 +403,16 @@ internal fun PlayerLyricsView(
                                         blurRadius = { blurRadiusState.value },
                                         blendMode = stableBlendMode,
                                     ) {
-                                        SyncedLineText(
-                                            line = line,
-                                            isLineRtl = isLineRtl,
-                                            textStyle = stableNormalTextStyle.copy(lineHeight = 1.2.em),
-                                            textColor = textColor,
-                                            showTranslation = showTranslation,
-                                        )
+                                        // Translation Text inherits this style; primary and phonetic text use explicit styles.
+                                        CompositionLocalProvider(LocalTextStyle provides translationTextStyle) {
+                                            SyncedLineText(
+                                                line = line,
+                                                isLineRtl = isLineRtl,
+                                                textStyle = stableNormalTextStyle.copy(lineHeight = 1.2.em),
+                                                textColor = textColor,
+                                                showTranslation = showTranslation,
+                                            )
+                                        }
                                     }
                                 }
                             }

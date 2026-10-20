@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.BlendMode
@@ -18,6 +19,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.captureToImage
@@ -25,7 +27,14 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.sp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.kyant.backdrop.backdrops.emptyBackdrop
 import com.ljyh.mei.ui.component.player.FloatingLyricsPipContent
@@ -220,5 +229,135 @@ class PlayerLyricsRenderingTest {
                 }
             }
         }
+    }
+
+    @Test
+    fun syncedTranslationSizeAndWeightUpdateIndependentlyOfPrimaryText() {
+        val translationStyle = mutableStateOf(TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Normal))
+        val line = SyncedLine("Primary lyric", "Translated lyric", 1_000, 5_000)
+        compose.setContent { TranslationTestContent(line, translationStyle.value) }
+
+        assertTypography("Translated lyric", 18, FontWeight.Normal)
+        assertTypography("Primary lyric", 28, FontWeight.Bold)
+        compose.runOnIdle {
+            translationStyle.value = TextStyle(fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        }
+        assertTypography("Translated lyric", 24, FontWeight.Bold)
+        assertTypography("Primary lyric", 28, FontWeight.Bold)
+        compose.runOnIdle {
+            translationStyle.value = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Normal)
+        }
+        assertTypography("Translated lyric", 16, FontWeight.Normal)
+    }
+
+    @Test
+    fun karaokeTranslationUpdatesWithoutChangingPhoneticText() {
+        val translationStyle = mutableStateOf(TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Normal))
+        val line = KaraokeLine.MainKaraokeLine(
+            syllables = listOf(KaraokeSyllable("Primary lyric", 1_000, 5_000)),
+            translation = "Translated lyric",
+            alignment = KaraokeAlignment.Start,
+            start = 1_000,
+            end = 5_000,
+            phonetic = "Phonetic lyric",
+        )
+        compose.setContent { TranslationTestContent(line, translationStyle.value) }
+
+        assertTypography("Translated lyric", 18, FontWeight.Normal)
+        assertTypography("Phonetic lyric", 13, FontWeight.Normal)
+        compose.runOnIdle {
+            translationStyle.value = TextStyle(fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        }
+        assertTypography("Translated lyric", 22, FontWeight.Bold)
+        assertTypography("Phonetic lyric", 13, FontWeight.Normal)
+    }
+
+    @Composable
+    private fun TranslationTestContent(line: ISyncedLine, translationStyle: TextStyle) {
+        MaterialTheme {
+            Box(Modifier.width(320.dp).height(480.dp)) {
+                PlayerLyricsView(
+                    listState = rememberLazyListState(),
+                    lyrics = SyncedLyrics(lines = listOf(line)),
+                    currentPosition = { 3_500 },
+                    onLineClicked = {},
+                    onLinePressed = {},
+                    isManualScrolling = false,
+                    normalLineTextStyle = TextStyle(fontSize = 28.sp, fontWeight = FontWeight.Bold),
+                    phoneticTextStyle = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Normal),
+                    translationLineTextStyle = translationStyle,
+                    useBlurEffect = false,
+                    offset = 32.dp,
+                    keepAliveZone = 0.dp,
+                )
+            }
+        }
+    }
+
+    @Test
+    fun wrappedSyncedTranslationsKeepEnoughSpaceAtLargeFontSizes() {
+        assertTranslationLineSpacing(
+            SyncedLine("Primary lyric", multilineTranslation, 1_000, 5_000)
+        )
+    }
+
+    @Test
+    fun wrappedKaraokeTranslationsKeepEnoughSpaceAtLargeFontSizes() {
+        assertTranslationLineSpacing(
+            KaraokeLine.MainKaraokeLine(
+                syllables = listOf(KaraokeSyllable("Primary lyric", 1_000, 5_000)),
+                translation = multilineTranslation,
+                alignment = KaraokeAlignment.Start,
+                start = 1_000,
+                end = 5_000,
+            )
+        )
+    }
+
+    private fun assertTranslationLineSpacing(line: ISyncedLine) {
+        // Reproduce the fixed theme line height inherited by the preference caller.
+        val translationStyle = mutableStateOf(TextStyle(fontSize = 18.sp, lineHeight = 24.sp))
+        val fontScale = mutableStateOf(1f)
+        compose.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale.value)) {
+                TranslationTestContent(line, translationStyle.value)
+            }
+        }
+
+        for ((size, scale) in listOf(18 to 1f, 32 to 1f, 32 to 1.5f, 18 to 1f)) {
+            compose.runOnIdle {
+                translationStyle.value = translationStyle.value.copy(
+                    fontSize = size.sp,
+                    fontWeight = if (size == 32) FontWeight.Bold else FontWeight.Normal,
+                )
+                fontScale.value = scale
+            }
+            val results = mutableListOf<TextLayoutResult>()
+            compose.onNodeWithText(multilineTranslation, useUnmergedTree = true)
+                .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+            val result = results.single()
+            assertTrue("Translation must exercise both wrapping and explicit newlines", result.lineCount >= 3)
+            val fontSizePx = with(result.layoutInput.density) { size.sp.toPx() }
+            for (index in 1 until result.lineCount) {
+                val baselineDistance = result.getLineBaseline(index) - result.getLineBaseline(index - 1)
+                assertTrue(
+                    "Translation baselines must fit ${size}sp glyphs at font scale $scale",
+                    baselineDistance >= fontSizePx,
+                )
+            }
+        }
+    }
+
+    private val multilineTranslation =
+        "大字号翻译歌词需要自动换行，前后两行文字不应重叠。\n第二段翻译歌词也应保留足够的行距。"
+
+    private fun assertTypography(text: String, sizeSp: Int, weight: FontWeight) {
+        val results = mutableListOf<TextLayoutResult>()
+        compose.onNodeWithText(text, useUnmergedTree = true)
+            .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+        assertEquals(1, results.size)
+        assertEquals(sizeSp.sp, results.single().layoutInput.style.fontSize)
+        assertEquals(weight, results.single().layoutInput.style.fontWeight)
     }
 }
