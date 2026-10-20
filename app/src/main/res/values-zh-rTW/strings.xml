@@ -727,4 +727,20 @@
     <string name="artist_all_albums_count">全部 %1$d 張專輯</string>
     <string name="artist_all_albums">全部專輯</string>
     <string name="artist_albums_empty">暫無專輯</string>
+
+    <string name="lyric_selection_title">歌詞來源</string>
+    <string name="lyric_selection_close">關閉歌詞來源</string>
+    <string name="lyric_selection_best_match">最佳匹配</string>
+    <string name="lyric_selection_source_netease">網易雲音樂</string>
+    <string name="lyric_selection_source_qq">QQ 音樂</string>
+    <string name="lyric_selection_source_am">Apple Music</string>
+    <string name="lyric_selection_source_other">歌詞來源</string>
+    <string name="lyric_selection_empty">找不到歌詞來源</string>
+    <string name="lyric_selection_delay">歌詞延遲</string>
+    <string name="lyric_selection_offset">%1$+.1f 秒</string>
+    <string name="lyric_selection_earlier">−0.5 秒</string>
+    <string name="lyric_selection_later">+0.5 秒</string>
+    <string name="lyric_selection_delay_hint">負值提前，正值延後，僅對這首歌生效。</string>
+    <string name="lyric_selection_reset_delay">恢復預設延遲</string>
+    <string name="lyric_selection_reset_source">恢復預設來源</string>
 </resources>

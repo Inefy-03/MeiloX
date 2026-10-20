@@ -16,6 +16,7 @@ import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
@@ -107,7 +108,9 @@ fun LyricScreen(
     controlsVisible: Boolean,
     onToggleControls: (Boolean) -> Unit,
     active: Boolean = true,
+    contentPadding: PaddingValues = PaddingValues(0.dp),
     sourceBadgeEndOffset: Dp = 0.dp,
+    sourceBadgeBottomPadding: Dp = 8.dp,
     sourceBadgeAnchor: Offset? = null,
     sourceBadgeAnchorProgress: () -> Float = { 1f },
     sourceBadgeHorizontalAnchorX: Float? = null,
@@ -352,70 +355,72 @@ fun LyricScreen(
                         }
                     }
                     key(keepAliveZonePx) {
-                        PlayerLyricsView(
-                            listState = listState,
-                            isManualScrolling = manualScroll.isBrowsing && listState.isScrollInProgress,
-                            useBlurEffect = !manualScroll.isBrowsing || focusLineVisible,
-                            lyrics = lyricData.lyricLine,
-                            currentPosition = { animatedPosition.toInt() },
-                            onLineClicked = { line ->
-                                manualScroll.onLineSelected()
-                                playerConnection.player.seekTo(line.start.toLong())
-                                onToggleControls(true)
-                            },
-                            onLinePressed = { line ->
-                                val result = when (line) {
-                                    is KaraokeLine -> {
-                                        "${line.syllables.joinToString("") { it.content }}\n${line.translation}"
-                                    }
-                                    is SyncedLine -> {
-                                        "${line.content}\n${line.translation}"
-                                    }
-                                    else -> {
-                                        Toast.makeText(context, "未知的歌词类型", Toast.LENGTH_SHORT).show()
-                                        null
-                                    }
-                                }
-
-                                result?.let {
-                                    try {
-                                        setClipboard(context, it, "lyric")
-                                    } catch (e: Exception) {
-                                        e.printStackTrace()
-                                        Toast.makeText(context, "复制失败", Toast.LENGTH_SHORT).show()
-                                    }
-                                }
-                            },
-                            modifier = Modifier
-                                .padding(vertical = rendererVerticalPadding)
-                                .graphicsLayer {
-                                    alpha = lyricAlpha.value
-                                    blendMode = BlendMode.Plus
-                                    compositingStrategy = CompositingStrategy.Offscreen
+                        Box(Modifier.fillMaxSize().padding(contentPadding)) {
+                            PlayerLyricsView(
+                                listState = listState,
+                                isManualScrolling = manualScroll.isBrowsing && listState.isScrollInProgress,
+                                useBlurEffect = !manualScroll.isBrowsing || focusLineVisible,
+                                lyrics = lyricData.lyricLine,
+                                currentPosition = { animatedPosition.toInt() },
+                                onLineClicked = { line ->
+                                    manualScroll.onLineSelected()
+                                    playerConnection.player.seekTo(line.start.toLong())
+                                    onToggleControls(true)
                                 },
-                            normalLineTextStyle = LocalTextStyle.current.copy(
-                                fontSize = normalLyricTextSize.text.sp,
-                                fontWeight = if (normalLyricTextBold) FontWeight.Bold else FontWeight.Normal,
-                                textMotion = TextMotion.Animated,
-                            ),
-                            accompanimentLineTextStyle = LocalTextStyle.current.copy(
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold,
-                                textMotion = TextMotion.Animated,
-                            ),
-                            translationLineTextStyle = LocalTextStyle.current.copy(
-                                fontSize = translationLyricTextSize.text.sp,
-                                fontWeight = if (translationLyricTextBold) FontWeight.Bold else FontWeight.Normal,
-                                textMotion = TextMotion.Animated,
-                            ),
-                            offset = 48.dp,
-                            keepAliveZone = keepAliveZone,
-                            placementGeneration = placementGeneration,
-                            topFadeHeight = topFadeHeight,
-                            bottomFadeHeight = bottomFadeHeight,
-                            contentModifier = lyricContentModifier,
-                            controlsFadeRange = controlsFadeRange,
-                        )
+                                onLinePressed = { line ->
+                                    val result = when (line) {
+                                        is KaraokeLine -> {
+                                            "${line.syllables.joinToString("") { it.content }}\n${line.translation}"
+                                        }
+                                        is SyncedLine -> {
+                                            "${line.content}\n${line.translation}"
+                                        }
+                                        else -> {
+                                            Toast.makeText(context, "未知的歌词类型", Toast.LENGTH_SHORT).show()
+                                            null
+                                        }
+                                    }
+
+                                    result?.let {
+                                        try {
+                                            setClipboard(context, it, "lyric")
+                                        } catch (e: Exception) {
+                                            e.printStackTrace()
+                                            Toast.makeText(context, "复制失败", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                },
+                                modifier = Modifier
+                                    .padding(vertical = rendererVerticalPadding)
+                                    .graphicsLayer {
+                                        alpha = lyricAlpha.value
+                                        blendMode = BlendMode.Plus
+                                        compositingStrategy = CompositingStrategy.Offscreen
+                                    },
+                                normalLineTextStyle = LocalTextStyle.current.copy(
+                                    fontSize = normalLyricTextSize.text.sp,
+                                    fontWeight = if (normalLyricTextBold) FontWeight.Bold else FontWeight.Normal,
+                                    textMotion = TextMotion.Animated,
+                                ),
+                                accompanimentLineTextStyle = LocalTextStyle.current.copy(
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    textMotion = TextMotion.Animated,
+                                ),
+                                translationLineTextStyle = LocalTextStyle.current.copy(
+                                    fontSize = translationLyricTextSize.text.sp,
+                                    fontWeight = if (translationLyricTextBold) FontWeight.Bold else FontWeight.Normal,
+                                    textMotion = TextMotion.Animated,
+                                ),
+                                offset = 48.dp,
+                                keepAliveZone = keepAliveZone,
+                                placementGeneration = placementGeneration,
+                                topFadeHeight = topFadeHeight,
+                                bottomFadeHeight = bottomFadeHeight,
+                                contentModifier = lyricContentModifier,
+                                controlsFadeRange = controlsFadeRange,
+                            )
+                        }
                     }
                 }
 
@@ -423,7 +428,7 @@ fun LyricScreen(
                     source = lyricData.source,
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .padding(bottom = 8.dp)
+                        .padding(bottom = sourceBadgeBottomPadding)
                         .offset {
                             val defaultX = sourceBadgeEndOffset.roundToPx()
                             val defaultY = -sourceBadgeBottomInset().roundToPx()
@@ -435,7 +440,7 @@ fun LyricScreen(
                                 val badgeSize = 34.dp.roundToPx()
                                 val isLtr = layoutDirection == LayoutDirection.Ltr
                                 val left = if (isLtr) host.size.width - badgeSize else 0
-                                val top = host.size.height - 8.dp.roundToPx() - badgeSize
+                                val top = host.size.height - sourceBadgeBottomPadding.roundToPx() - badgeSize
                                 val hostOrigin = host.positionInRoot()
                                 lyricSourceBadgeOffset(
                                     defaultX = defaultX,
