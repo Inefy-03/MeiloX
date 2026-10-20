@@ -1,7 +1,9 @@
 package com.ljyh.mei.ui.glass
 
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.height
@@ -12,6 +14,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,6 +45,12 @@ import com.kyant.backdrop.backdrops.emptyBackdrop
 import com.kyant.backdrop.backdrops.rememberCanvasBackdrop
 import com.kyant.capsule.ContinuousRoundedRectangle
 import com.kyant.shapes.Capsule
+import com.ljyh.mei.ui.component.sheet.BottomSheet
+import com.ljyh.mei.ui.component.sheet.BottomSheetState
+import com.ljyh.mei.ui.component.sheet.LocalPlayerSheet
+import com.ljyh.mei.ui.component.sheet.collapsedAnchor
+import com.ljyh.mei.ui.component.sheet.rememberBottomSheetState
+import com.ljyh.mei.ui.component.sheet.rememberPlayerSheetLayers
 import kotlin.math.abs
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -314,6 +323,103 @@ class GlassBottomBarInteractionTest {
                             assertEquals("$label restored green $sampleIndex", expected.green, actual.green, tolerance)
                             assertEquals("$label restored blue $sampleIndex", expected.blue, actual.blue, tolerance)
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun miniPlayerInnerShadowsSurvivePlayerExpansionAndCollapse() {
+        val scenarios = listOf(false, true).flatMap { isDark ->
+            listOf(false, true).map { liquidGlassEnabled -> isDark to liquidGlassEnabled }
+        }
+        val scenarioIndex = mutableStateOf(0)
+        var activeSheet: BottomSheetState? = null
+        val compactMiniProgress = mutableFloatStateOf(0f)
+        compose.setContent {
+            val scenario = scenarios[scenarioIndex.value]
+            key(scenario) {
+                val (isDark, liquidGlassEnabled) = scenario
+                val backing = if (isDark) Color(0xFF343434) else Color(0xFFB3B3B3)
+                val backdrop = rememberCanvasBackdrop { drawRect(backing) }
+                val sheet = rememberBottomSheetState(
+                    dismissedBound = 0.dp,
+                    collapsedBound = 48.dp,
+                    expandedBound = 400.dp,
+                    initialAnchor = collapsedAnchor,
+                )
+                val layers = rememberPlayerSheetLayers(sheet)
+                activeSheet = sheet
+                CompositionLocalProvider(
+                    LocalGlassColors provides defaultGlassColors(isDark),
+                    LocalGlassAppearance provides GlassAppearance(liquidGlassEnabled = liquidGlassEnabled),
+                    LocalPlayerSheet provides layers,
+                ) {
+                    BottomSheet(
+                        state = sheet,
+                        modifier = Modifier.size(280.dp, 400.dp),
+                        collapsedDragHeight = 48.dp,
+                        transitionBackdrop = backdrop,
+                        collapsedContent = {
+                            GlassSurface(
+                                modifier = Modifier.size(280.dp, 48.dp)
+                                    .testTag("retainedMiniMaterial")
+                                    .onGloballyPositioned {
+                                        layers.miniBounds = Rect(
+                                            it.positionInRoot(),
+                                            Size(it.size.width.toFloat(), it.size.height.toFloat()),
+                                        )
+                                    },
+                                backdrop = backdrop,
+                                shape = Capsule(),
+                                style = GlassSurfaceStyle.Navigation,
+                                morphProgress = compactMiniProgress,
+                                cancelPressFeedback = sheet.isTransitioning,
+                                pressHighlight = remember(layers) { { layers.collapsedPressHighlight } },
+                                onVisualBoundsChanged = layers::updateMiniPressHighlight,
+                            ) {
+                                Box(Modifier.size(280.dp, 48.dp).onGloballyPositioned {
+                                    layers.miniLayoutCoordinates = it
+                                })
+                            }
+                        },
+                    ) {}
+                }
+            }
+        }
+        scenarios.forEachIndexed { index, scenario ->
+            compose.runOnIdle { scenarioIndex.value = index }
+            compose.waitForIdle()
+            val before = compose.onNodeWithTag("retainedMiniMaterial").captureToImage().toPixelMap()
+            val sampleYs = listOf(3f, 10f, 16f, 24f, 32f, 38f, 45f)
+            val scale = before.width / 280f
+            fun tone(color: Color) = (color.red + color.green + color.blue) / 3f
+            val initialTones = sampleYs.map { tone(before[before.width / 2, (it * scale).toInt()]) }
+            assertTrue(
+                "$scenario initially contains visible inner bands",
+                initialTones.max() - initialTones.min() >= 3f / 255f,
+            )
+            repeat(2) { cycle ->
+                compose.runOnIdle { checkNotNull(activeSheet).expand(tween(300)) }
+                compose.waitForIdle()
+                compose.runOnIdle { assertTrue(checkNotNull(activeSheet).isExpanded) }
+                compose.runOnIdle { checkNotNull(activeSheet).collapse(tween(300)) }
+                compose.waitForIdle()
+                compose.runOnIdle { assertTrue(checkNotNull(activeSheet).isCollapsed) }
+                val after = compose.onNodeWithTag("retainedMiniMaterial").captureToImage().toPixelMap()
+                listOf(70f, 140f, 210f).forEach { xDp ->
+                    sampleYs.forEach { yDp ->
+                        val x = (xDp * scale).toInt()
+                        val y = (yDp * scale).toInt()
+                        val expected = before[x, y]
+                        val actual = after[x, y]
+                        val label = "$scenario after cycle $cycle at ($xDp, $yDp)"
+                        val tolerance = 1f / 255f
+                        assertEquals("$label red", expected.red, actual.red, tolerance)
+                        assertEquals("$label green", expected.green, actual.green, tolerance)
+                        assertEquals("$label blue", expected.blue, actual.blue, tolerance)
+                        assertEquals("$label alpha", expected.alpha, actual.alpha, tolerance)
                     }
                 }
             }

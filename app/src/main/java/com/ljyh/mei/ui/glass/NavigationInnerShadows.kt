@@ -79,7 +79,13 @@ internal class NavigationInnerShadowRenderer(
         val canvas = scope.drawContext.canvas.nativeCanvas
         if (!canvas.isHardwareAccelerated || bounds.isEmpty) return
         val nextKey = GeometryKey(shape, bounds.size, scope.layoutDirection, scope.density, scope.fontScale)
-        if (key != nextKey) updateGeometry(scope, nextKey)
+        // HWUI may discard display lists while a retained surface is hidden. Geometry
+        // equality alone does not guarantee that its native shadow masks still exist.
+        val masksRecorded = packedMask?.hasDisplayList() ?: (
+            narrowMask.hasDisplayList() && wideMask.hasDisplayList() &&
+                burnMask?.hasDisplayList() != false
+            )
+        if (key != nextKey || !masksRecorded) updateGeometry(scope, nextKey)
         val save = canvas.save()
         try {
             canvas.translate(bounds.left, bounds.top)
