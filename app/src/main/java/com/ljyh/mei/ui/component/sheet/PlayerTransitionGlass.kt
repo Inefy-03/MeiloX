@@ -47,6 +47,7 @@ internal fun PlayerTransitionGlass(
             shape = ContinuousRoundedRectangle(radius.toDp()),
             tint = colors.container,
             navigationMaterial = true,
+            dropShadowAlpha = 1f - playerBackgroundAlpha(p),
             isDark = colors.isDark,
             highlightAlpha = 0.5f * 0.54f,
             pressHighlight = pressHighlight,

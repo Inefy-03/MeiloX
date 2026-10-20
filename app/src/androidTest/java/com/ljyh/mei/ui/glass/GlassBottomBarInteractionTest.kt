@@ -1,5 +1,6 @@
 package com.ljyh.mei.ui.glass
 
+import android.graphics.RenderNode
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
@@ -27,6 +28,7 @@ import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -152,6 +154,210 @@ class GlassBottomBarInteractionTest {
     }
 
     @Test
+    fun navigationShadowLiftRaisesOnlyDarkSamplesAndPreservesAlpha() {
+        val swatches = listOf(
+            Color.Black, Color(0xFF202020), Color(0xFF404040), Color(0xFF666666),
+            Color(0xFF600010), Color(0xFF001060),
+            Color(0xFF808080), Color(0xFFF0F0F0), Color.White, Color(0xFF2080C0),
+            Color.Black.copy(alpha = 0.4f), Color(0xFF202020).copy(alpha = 0.4f),
+            Color(0xFF808080).copy(alpha = 0.4f), Color.Transparent,
+        )
+        compose.setContent {
+            val filtered = remember {
+                RenderNode("Navigation shadow lift swatches").apply {
+                    setRenderEffect(navigationShadowLiftEffect())
+                }
+            }
+            val paint = remember { android.graphics.Paint() }
+            DisposableEffect(filtered) { onDispose { filtered.discardDisplayList() } }
+            Canvas(Modifier.size(288.dp, 192.dp).testTag("navigationShadowLift")) {
+                val canvas = drawContext.canvas.nativeCanvas
+                assertTrue("The shadow lift comparison requires GPU rendering", canvas.isHardwareAccelerated)
+                val stripeHeight = 48.dp.toPx()
+                val swatchWidth = size.width / swatches.size
+                filtered.setPosition(0, 0, size.width.toInt(), stripeHeight.toInt())
+                val recording = filtered.beginRecording()
+                try {
+                    swatches.forEachIndexed { index, color ->
+                        paint.color = color.toArgb()
+                        recording.drawRect(
+                            index * swatchWidth, 0f, (index + 1) * swatchWidth, stripeHeight, paint,
+                        )
+                    }
+                } finally {
+                    filtered.endRecording()
+                }
+                repeat(4) { row ->
+                    val rowTop = row * stripeHeight
+                    drawRect(
+                        if (row % 2 == 0) Color.Black else Color.White,
+                        topLeft = Offset(0f, rowTop),
+                        size = Size(size.width, stripeHeight),
+                    )
+                    if (row < 2) {
+                        canvas.save()
+                        canvas.translate(0f, rowTop)
+                        canvas.drawRenderNode(filtered)
+                        canvas.restore()
+                    } else {
+                        swatches.forEachIndexed { index, color ->
+                            drawRect(
+                                color,
+                                topLeft = Offset(index * swatchWidth, rowTop),
+                                size = Size(swatchWidth, stripeHeight),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        compose.waitForIdle()
+        val pixels = compose.onNodeWithTag("navigationShadowLift").captureToImage().toPixelMap()
+        fun sample(index: Int, row: Int) = pixels[
+            ((index + 0.5f) * pixels.width / swatches.size).toInt(),
+            ((row + 0.5f) * pixels.height / 4f).toInt(),
+        ]
+        fun tone(color: Color) = (color.red + color.green + color.blue) / 3f
+        fun assertColor(message: String, expected: Color, actual: Color, tolerance: Float = 1f / 255f) {
+            assertEquals("$message red", expected.red, actual.red, tolerance)
+            assertEquals("$message green", expected.green, actual.green, tolerance)
+            assertEquals("$message blue", expected.blue, actual.blue, tolerance)
+            assertEquals("$message alpha", expected.alpha, actual.alpha, tolerance)
+        }
+        val lifts = (0..3).map { index ->
+            val lift = tone(sample(index, 0)) - tone(sample(index, 2))
+            assertTrue("Dark sample $index is lifted: $lift", lift > 1f / 255f)
+            lift
+        }
+        assertTrue("Pure black receives a visible lift", lifts.first() >= 70f / 255f)
+        lifts.zipWithNext().forEachIndexed { index, (darker, lighter) ->
+            assertTrue("The lift tapers toward midtones at $index", darker >= lighter)
+        }
+        listOf(4, 5).forEach { index ->
+            assertTrue(
+                "Dark saturated sample $index is lifted by luminance",
+                tone(sample(index, 0)) - tone(sample(index, 2)) >= 30f / 255f,
+            )
+        }
+        listOf(6, 7, 8, 9, 12, 13).forEach { index ->
+            repeat(2) { backing ->
+                assertColor("Unchanged sample $index over backing $backing", sample(index, backing + 2), sample(index, backing))
+            }
+        }
+        // Black and white backings expose any accidental change to premultiplied alpha.
+        listOf(10, 11).forEach { index ->
+            val black = sample(index, 0)
+            val white = sample(index, 1)
+            val referenceBlack = sample(index, 2)
+            val referenceWhite = sample(index, 3)
+            assertTrue("Translucent dark sample $index is lifted", tone(black) > tone(referenceBlack) + 1f / 255f)
+            listOf(
+                (white.red - black.red) to (referenceWhite.red - referenceBlack.red),
+                (white.green - black.green) to (referenceWhite.green - referenceBlack.green),
+                (white.blue - black.blue) to (referenceWhite.blue - referenceBlack.blue),
+            ).forEachIndexed { channel, (actual, expected) ->
+                assertEquals("Translucent sample $index keeps alpha in channel $channel", expected, actual, 2f / 255f)
+            }
+            val opaque = sample(index - 10, 0)
+            assertColor(
+                "Translucent sample $index keeps straight color",
+                Color(opaque.red * 0.4f, opaque.green * 0.4f, opaque.blue * 0.4f),
+                black,
+                2f / 255f,
+            )
+        }
+    }
+
+    @Test
+    fun shadowLiftRemainsVisibleThroughStaticAndMorphNavigationMaterials() {
+        val backings = listOf(
+            Color.Black, Color(0xFF202020), Color(0xFF404040),
+            Color(0xFF600010), Color(0xFF001060),
+            Color(0xFF2080C0), Color(0xFF808080), Color.White,
+        )
+        val backingIndex = mutableStateOf(0)
+        compose.setContent {
+            key(backingIndex.value) {
+                val backing = backings[backingIndex.value]
+                val appearance = GlassAppearance(liquidGlassEnabled = false)
+                val tint = defaultGlassColors(false).container
+                val backdrop = rememberCanvasBackdrop { drawRect(backing) }
+                val shape = Capsule()
+                val staticShadows = rememberNavigationInnerShadows(true)
+                val referenceShadows = rememberNavigationInnerShadows(true)
+                val coordinates = remember { mutableStateOf<LayoutCoordinates?>(null) }
+                CompositionLocalProvider(LocalGlassAppearance provides appearance) {
+                    val renderer = rememberGlassMorphRenderer(backdrop, active = true)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(true, false).forEach { lifted ->
+                            Canvas(
+                                Modifier.size(80.dp, 48.dp)
+                                    .testTag(if (lifted) "shadowLiftStatic" else "shadowLiftMaterialReference")
+                                    .navigationGlassBackground(
+                                        backdrop = backdrop,
+                                        shape = { shape },
+                                        containerColor = tint,
+                                        navigationMaterial = lifted,
+                                        innerShadows = staticShadows,
+                                        appearance = appearance,
+                                        // Bypass only the lift gate while retaining the old full material.
+                                        surfaceOverlay = if (lifted) null else ({
+                                            drawNavigationGlassMaterial(tint, isDark = false)
+                                            referenceShadows?.draw(this, shape, isDark = false)
+                                        }),
+                                    ),
+                            ) { }
+                        }
+                        Canvas(
+                            Modifier.size(80.dp, 48.dp).testTag("shadowLiftMorph")
+                                .onGloballyPositioned { coordinates.value = it },
+                        ) {
+                            val current = coordinates.value ?: return@Canvas
+                            val origin = current.positionInRoot()
+                            renderer.draw(
+                                scope = this,
+                                coordinates = current,
+                                viewport = Rect(origin, size),
+                                origin = origin,
+                                bounds = Rect(Offset.Zero, size),
+                                radius = 24.dp.toPx(),
+                                shape = shape,
+                                tint = tint,
+                                highlightAlpha = 0f,
+                                navigationOutline = false,
+                                navigationMaterial = true,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        backings.indices.forEach { index ->
+            compose.runOnIdle { backingIndex.value = index }
+            compose.waitForIdle()
+            fun center(tag: String): Color {
+                val image = compose.onNodeWithTag(tag).captureToImage().toPixelMap()
+                return image[image.width / 2, image.height / 2]
+            }
+            val reference = center("shadowLiftMaterialReference")
+            listOf("shadowLiftStatic", "shadowLiftMorph").forEach { tag ->
+                val actual = center(tag)
+                val delta = (actual.red + actual.green + actual.blue -
+                    reference.red - reference.green - reference.blue) / 3f
+                val label = "$tag over $index after tint and inner shadows"
+                if (index < 5) {
+                    val minimumLift = if (index == 0) 20f / 255f else 8f / 255f
+                    assertTrue("$label remains visibly lifted: $delta", delta >= minimumLift)
+                } else {
+                    assertEquals("$label red", reference.red, actual.red, 2f / 255f)
+                    assertEquals("$label green", reference.green, actual.green, 2f / 255f)
+                    assertEquals("$label blue", reference.blue, actual.blue, 2f / 255f)
+                }
+            }
+        }
+    }
+
+    @Test
     fun navigationInnerShadowsPreserveContrastInsideSmallShapes() {
         val backingColors = listOf(Color.White, Color(0xFFF0F0F0), Color(0xFF202020), Color(0xFF404040))
         val bounds = listOf(Rect(8f, 8f, 52f, 52f), Rect(88f, 8f, 168f, 56f))
@@ -234,6 +440,59 @@ class GlassBottomBarInteractionTest {
                     pixelAt(shapeBounds.left + 2f, stripeTop + shapeBounds.top + 2f),
                 )
             }
+        }
+    }
+
+    @Test
+    fun navigationDropShadowsStayOutsideTransparentShapes() {
+        val scenarios = listOf(false, true).flatMap { circle ->
+            listOf(1f, 0.25f).map { renderScale -> circle to renderScale }
+        }
+        val scenarioIndex = mutableStateOf(0)
+        compose.setContent {
+            val (circle, renderScale) = scenarios[scenarioIndex.value]
+            val renderer = remember(renderScale) { NavigationDropShadowRenderer(renderScale) }
+            DisposableEffect(renderer) { onDispose { renderer.release() } }
+            Canvas(Modifier.size(176.dp, 144.dp).testTag("navigationDropShadow")) {
+                assertTrue("The shadow comparison requires GPU rendering", drawContext.canvas.nativeCanvas.isHardwareAccelerated)
+                drawRect(Color.White)
+                val width = if (circle) 48.dp.toPx() else 112.dp.toPx()
+                val bounds = Rect(
+                    left = (size.width - width) / 2f,
+                    top = 40.dp.toPx(),
+                    right = (size.width + width) / 2f,
+                    bottom = 88.dp.toPx(),
+                )
+                // No glass fill covers the shadow: the transparent interior must stay untouched.
+                renderer.draw(this, if (circle) CircleShape else Capsule(), bounds)
+            }
+        }
+        scenarios.forEachIndexed { index, (circle, renderScale) ->
+            compose.runOnIdle { scenarioIndex.value = index }
+            compose.waitForIdle()
+            val pixels = compose.onNodeWithTag("navigationDropShadow").captureToImage().toPixelMap()
+            fun pixelAt(xDp: Float, yDp: Float) = pixels[
+                (xDp * pixels.width / 176f).toInt(),
+                (yDp * pixels.height / 144f).toInt(),
+            ]
+            fun darkness(color: Color) = (1f - (color.red + color.green + color.blue) / 3f) * 255f
+            val halfWidth = if (circle) 24f else 56f
+            val label = "Drop shadow, circle=$circle, scale=$renderScale"
+            listOf(
+                Offset(88f, 42f), Offset(88f, 64f), Offset(88f, 86f),
+                Offset(88f - halfWidth + 2f, 64f), Offset(88f + halfWidth - 2f, 64f),
+            ).forEach { point ->
+                val color = pixelAt(point.x, point.y)
+                assertEquals("$label transparent interior at $point", 0f, darkness(color), 0.01f)
+                assertEquals("$label interior alpha at $point", 1f, color.alpha, 1f / 255f)
+            }
+            val lowerShadow = darkness(pixelAt(88f, 90f))
+            val upperShadow = darkness(pixelAt(88f, 38f))
+            // A 2% black shadow has at most five levels of contrast on this white backing.
+            assertTrue("$label visible lower shadow: $lowerShadow", lowerShadow >= 2f - 0.01f)
+            assertTrue("$label keeps the specified subtle opacity: $lowerShadow", lowerShadow <= 5f + 0.01f)
+            assertTrue("$label downward offset: lower=$lowerShadow, upper=$upperShadow", lowerShadow - upperShadow >= 1f - 0.01f)
+            assertEquals("$label distant backing", 0f, darkness(pixelAt(88f, 132f)), 1f + 0.01f)
         }
     }
 

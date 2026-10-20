@@ -95,6 +95,8 @@ internal class GlassMorphRenderer(
     private val highlightBrush = ShaderBrush(highlight)
     private val pressLight = PressHighlightRenderer()
     private val innerShadows = NavigationInnerShadowRenderer(renderScale = renderScale)
+    private val dropShadow = NavigationDropShadowRenderer(renderScale = renderScale)
+    private val shadowLiftEffect = if (appearance.usesBackdrop) navigationShadowLiftEffect() else null
     private var recordedViewport: Rect? = null
     private val sourceEffect = if (appearance.usesBackdrop) run {
         val color = RenderEffect.createColorFilterEffect(
@@ -111,6 +113,7 @@ internal class GlassMorphRenderer(
 
     fun release() {
         innerShadows.release()
+        dropShadow.release()
     }
 
     fun draw(
@@ -128,6 +131,7 @@ internal class GlassMorphRenderer(
         refractionAmount: Dp = 24.dp,
         navigationOutline: Boolean = true,
         navigationMaterial: Boolean = false,
+        dropShadowAlpha: Float = 0f,
         isDark: Boolean = false,
         sampleScale: Offset = Offset(1f, 1f),
         pressHighlight: GlassPressHighlight? = null,
@@ -145,6 +149,9 @@ internal class GlassMorphRenderer(
             translate(bounds.topLeft)
         }
         val sourceOffset = origin - viewport.topLeft
+        if (dropShadowAlpha > 0f) {
+            dropShadow.draw(this, shape, bounds, alpha = dropShadowAlpha)
+        }
         if (appearance.usesBackdrop && recordedViewport != viewport) {
             val bufferSize = IntSize(
                 ceil(viewport.width * renderScale).toInt(),
@@ -187,7 +194,7 @@ internal class GlassMorphRenderer(
             ) { drawLayer(source) }
             recordedViewport = viewport
         }
-        refracted.renderEffect = if (shader != null) {
+        val refractionEffect = if (shader != null) {
             val sampleBounds = Rect(
                 sourceOffset.x + bounds.left * sampleScale.x,
                 sourceOffset.y + bounds.top * sampleScale.y,
@@ -199,8 +206,13 @@ internal class GlassMorphRenderer(
             shader.setFloatUniform("radius", radius * minOf(sampleScale.x, sampleScale.y) * renderScale)
             shader.setFloatUniform("height", refractionHeight.toPx() * renderScale)
             shader.setFloatUniform("amount", -refractionAmount.toPx() * renderScale)
-            RenderEffect.createRuntimeShaderEffect(shader, "content").asComposeRenderEffect()
+            RenderEffect.createRuntimeShaderEffect(shader, "content")
         } else null
+        val sampledEffect = if (navigationMaterial && !isDark && shadowLiftEffect != null) {
+            if (refractionEffect != null) RenderEffect.createChainEffect(shadowLiftEffect, refractionEffect)
+            else shadowLiftEffect
+        } else refractionEffect
+        refracted.renderEffect = sampledEffect?.asComposeRenderEffect()
 
         if (navigationOutline) {
             val sideExpansion = 1.4.dp.toPx()
@@ -372,6 +384,7 @@ internal fun rememberMorphingNavigationGlass(
                     refractionAmount = if (lensSource) 28.dp * press else 24.dp,
                     navigationOutline = !lensSource,
                     navigationMaterial = navigationMaterial,
+                    dropShadowAlpha = if (lensSource) 0f else 1f,
                     isDark = isDark,
                     sampleScale = sampleScale,
                 )

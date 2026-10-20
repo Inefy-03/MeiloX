@@ -440,6 +440,7 @@ fun <T> GlassBottomBar(
                             depthEffect = press > 0.01f,
                             chromaticAberration = true,
                         )
+                        if (isLight && appearance.usesBackdrop) liftNavigationShadows()
                     },
                     highlight = {
                         Highlight.Default.copy(alpha = 0.94f * pressProgressState.value)

@@ -49,7 +49,6 @@ import androidx.compose.ui.node.requireGraphicsContext
 import androidx.compose.ui.platform.InspectorInfo
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
@@ -381,8 +380,8 @@ internal const val LightNavigationContainerAlphaScale = 0.5f
 
 /** Adjusts only the sampled image, before the neutral tint and foreground are drawn. */
 internal fun DrawScope.drawLightNavigationBackdrop() {
-    drawRect(Color(0xFFF8F8F8).copy(alpha = 0.2f), blendMode = BlendMode.Luminosity)
-    drawRect(Color(0xFF444444).copy(alpha = 0.1f), blendMode = BlendMode.Plus)
+    drawRect(Color(0xFFF8F8F8).copy(alpha = 0.25f), blendMode = BlendMode.Luminosity)
+    drawRect(Color(0xFF444444).copy(alpha = 0.15f), blendMode = BlendMode.Plus)
 }
 
 /** Neutral navigation material, applied to the sampled image before its inner shadows. */
@@ -477,6 +476,7 @@ internal fun Modifier.navigationGlassBackground(
     layerBlock: (GraphicsLayerScope.() -> Unit)? = null,
     appearance: GlassAppearance = GlassAppearance(),
 ): Modifier = this
+    .navigationGlassDropShadow(shape, layerBlock)
     .navigationGlassBoxShadow(shape, GlassBoxShadowAlpha, layerBlock)
     .drawBackdrop(
         backdrop = if (sampleBackdrop && appearance.usesBackdrop) backdrop else emptyBackdrop(),
@@ -493,6 +493,7 @@ internal fun Modifier.navigationGlassBackground(
                         chromaticAberration = true,
                     )
                 }
+                if (navigationMaterial && !isDark) liftNavigationShadows()
             }
         },
         highlight = {
@@ -504,14 +505,7 @@ internal fun Modifier.navigationGlassBackground(
                 )
             }
         },
-        shadow = {
-            Shadow(
-                radius = 15.dp,
-                offset = DpOffset(0.dp, 8.dp),
-                color = Color.Black,
-                alpha = 0.02f * GlassBoxShadowAlpha,
-            )
-        },
+        shadow = null,
         innerShadow = null,
         layerBlock = layerBlock,
         onDrawSurface = {
