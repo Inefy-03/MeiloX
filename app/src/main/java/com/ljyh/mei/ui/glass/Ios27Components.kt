@@ -1419,6 +1419,7 @@ fun IosAlertSurface(
 ) {
     val colors = LocalGlassColors.current
     val appearance = LocalGlassAppearance.current
+    val innerShadows = rememberNavigationInnerShadows(true)
     val light = !colors.isDark
     val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
     SideEffect {
@@ -1460,6 +1461,7 @@ fun IosAlertSurface(
                         }
                     },
                     highlight = { Highlight.Plain },
+                    innerShadow = null,
                     layerBlock = alertLayerBlock,
                     onDrawSurface = {
                         if (!appearance.usesBackdrop) {
@@ -1487,6 +1489,7 @@ fun IosAlertSurface(
                                 blendMode = BlendMode.Lighten,
                             )
                         }
+                        innerShadows?.draw(this, alertShape, isDark = colors.isDark)
                     },
                 )
                 .then(interactiveHighlight.modifier)
