@@ -39,6 +39,7 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -126,11 +127,18 @@ internal fun PlayerLyricsView(
     blurDelta: Float = 3f,
     showDebugRectangles: Boolean = false,
     placementGeneration: Int = 0,
+    translationLineTextStyle: TextStyle = LocalTextStyle.current,
+    topFadeHeight: Dp = 20.dp,
+    bottomFadeHeight: Dp = 100.dp,
+    contentModifier: Modifier = Modifier,
+    controlsFadeRange: (Float) -> ClosedFloatingPointRange<Float>? = { null },
 ) {
     val stableNormalTextStyle = remember(normalLineTextStyle) { normalLineTextStyle }
     val stableAccompanimentTextStyle =
         remember(accompanimentLineTextStyle) { accompanimentLineTextStyle }
     val stablePhoneticTextStyle = remember(phoneticTextStyle) { phoneticTextStyle }
+    // Theme line heights are fixed in sp and can be smaller than the selected font.
+    val translationTextStyle = translationLineTextStyle.copy(lineHeight = 1.2.em)
     val stableOffset = remember(offset) { offset }
     val stableBlendMode = remember(blendMode) { blendMode }
 
@@ -232,23 +240,39 @@ internal fun PlayerLyricsView(
                     state = listState,
                     modifier = modifier
                         .fillMaxSize()
+                        .then(contentModifier)
                         .graphicsLayer {
                             compositingStrategy = CompositingStrategy.Offscreen
                         }
                         .drawWithCache {
                             onDrawWithContent {
                                 drawContent()
-                                val topFade = 20.dp.toPx() / size.height
-                                val bottomFade = 100.dp.toPx() / size.height
-                                drawRect(
-                                    brush = Brush.verticalGradient(
-                                        0f to Color.Transparent,
-                                        topFade to Color.Black,
-                                        1f - bottomFade to Color.Black,
-                                        1f to Color.Transparent
-                                    ),
-                                    blendMode = BlendMode.DstIn
-                                )
+                                if (topFadeHeight > 0.dp || bottomFadeHeight > 0.dp) {
+                                    val topFade = topFadeHeight.toPx() / size.height
+                                    val bottomFade = bottomFadeHeight.toPx() / size.height
+                                    drawRect(
+                                        brush = Brush.verticalGradient(
+                                            0f to if (topFade > 0f) Color.Transparent else Color.Black,
+                                            topFade to Color.Black,
+                                            1f - bottomFade to Color.Black,
+                                            1f to if (bottomFade > 0f) Color.Transparent else Color.Black,
+                                        ),
+                                        blendMode = BlendMode.DstIn
+                                    )
+                                }
+                                controlsFadeRange(size.height)?.let { range ->
+                                    if (range.start < size.height && range.endInclusive > range.start) {
+                                        // Fade lyric pixels while preserving the live player background.
+                                        drawRect(
+                                            brush = Brush.verticalGradient(
+                                                colors = listOf(Color.Black, Color.Transparent),
+                                                startY = range.start,
+                                                endY = range.endInclusive,
+                                            ),
+                                            blendMode = BlendMode.DstIn,
+                                        )
+                                    }
+                                }
                             }
                         }
                         .layout { measurable, constraints ->
@@ -367,20 +391,23 @@ internal fun PlayerLyricsView(
                                                 textMeasurer,
                                                 precalculatedLayouts
                                             ) {
-                                                KaraokeLineText(
-                                                    line = line,
-                                                    currentTimeProvider = timeProvider,
-                                                    normalLineTextStyle = stableNormalTextStyle,
-                                                    accompanimentLineTextStyle = stableAccompanimentTextStyle,
-                                                    phoneticTextStyle = stablePhoneticTextStyle,
-                                                    activeColor = textColor,
-                                                    blendMode = stableBlendMode,
-                                                    showDebugRectangles = showDebugRectangles,
-                                                    showTranslation = showTranslation,
-                                                    showPhonetic = showPhonetic,
-                                                    precalculatedLayouts = precalculatedLayouts,
-                                                    textMeasurer = textMeasurer
-                                                )
+                                                // Translation Text inherits this style; primary and phonetic text use explicit styles.
+                                                CompositionLocalProvider(LocalTextStyle provides translationTextStyle) {
+                                                    KaraokeLineText(
+                                                        line = line,
+                                                        currentTimeProvider = timeProvider,
+                                                        normalLineTextStyle = stableNormalTextStyle,
+                                                        accompanimentLineTextStyle = stableAccompanimentTextStyle,
+                                                        phoneticTextStyle = stablePhoneticTextStyle,
+                                                        activeColor = textColor,
+                                                        blendMode = stableBlendMode,
+                                                        showDebugRectangles = showDebugRectangles,
+                                                        showTranslation = showTranslation,
+                                                        showPhonetic = showPhonetic,
+                                                        precalculatedLayouts = precalculatedLayouts,
+                                                        textMeasurer = textMeasurer
+                                                    )
+                                                }
                                             }
                                         }
                                     }
@@ -396,13 +423,16 @@ internal fun PlayerLyricsView(
                                         blurRadius = { blurRadiusState.value },
                                         blendMode = stableBlendMode,
                                     ) {
-                                        SyncedLineText(
-                                            line = line,
-                                            isLineRtl = isLineRtl,
-                                            textStyle = stableNormalTextStyle.copy(lineHeight = 1.2.em),
-                                            textColor = textColor,
-                                            showTranslation = showTranslation,
-                                        )
+                                        // Translation Text inherits this style; primary and phonetic text use explicit styles.
+                                        CompositionLocalProvider(LocalTextStyle provides translationTextStyle) {
+                                            SyncedLineText(
+                                                line = line,
+                                                isLineRtl = isLineRtl,
+                                                textStyle = stableNormalTextStyle.copy(lineHeight = 1.2.em),
+                                                textColor = textColor,
+                                                showTranslation = showTranslation,
+                                            )
+                                        }
                                     }
                                 }
                             }

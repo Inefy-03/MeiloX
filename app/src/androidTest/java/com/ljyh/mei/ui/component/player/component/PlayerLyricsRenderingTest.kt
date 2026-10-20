@@ -18,6 +18,7 @@ import androidx.compose.material3.SheetState
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -47,11 +48,17 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
-import androidx.compose.ui.unit.Density
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -587,5 +594,259 @@ class PlayerLyricsRenderingTest {
                 }
             }
         }
+    }
+
+    @Test
+    fun syncedTranslationSizeAndWeightUpdateIndependentlyOfPrimaryText() {
+        val translationStyle = mutableStateOf(TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Normal))
+        val line = SyncedLine("Primary lyric", "Translated lyric", 1_000, 5_000)
+        compose.setContent { TranslationTestContent(line, translationStyle.value) }
+
+        assertTypography("Translated lyric", 18, FontWeight.Normal)
+        assertTypography("Primary lyric", 28, FontWeight.Bold)
+        compose.runOnIdle {
+            translationStyle.value = TextStyle(fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        }
+        assertTypography("Translated lyric", 24, FontWeight.Bold)
+        assertTypography("Primary lyric", 28, FontWeight.Bold)
+        compose.runOnIdle {
+            translationStyle.value = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Normal)
+        }
+        assertTypography("Translated lyric", 16, FontWeight.Normal)
+    }
+
+    @Test
+    fun karaokeTranslationUpdatesWithoutChangingPhoneticText() {
+        val translationStyle = mutableStateOf(TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Normal))
+        val line = KaraokeLine.MainKaraokeLine(
+            syllables = listOf(KaraokeSyllable("Primary lyric", 1_000, 5_000)),
+            translation = "Translated lyric",
+            alignment = KaraokeAlignment.Start,
+            start = 1_000,
+            end = 5_000,
+            phonetic = "Phonetic lyric",
+        )
+        compose.setContent { TranslationTestContent(line, translationStyle.value) }
+
+        assertTypography("Translated lyric", 18, FontWeight.Normal)
+        assertTypography("Phonetic lyric", 13, FontWeight.Normal)
+        compose.runOnIdle {
+            translationStyle.value = TextStyle(fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        }
+        assertTypography("Translated lyric", 22, FontWeight.Bold)
+        assertTypography("Phonetic lyric", 13, FontWeight.Normal)
+    }
+
+    @Composable
+    private fun TranslationTestContent(line: ISyncedLine, translationStyle: TextStyle) {
+        MaterialTheme {
+            Box(Modifier.width(320.dp).height(480.dp)) {
+                PlayerLyricsView(
+                    listState = rememberLazyListState(),
+                    lyrics = SyncedLyrics(lines = listOf(line)),
+                    currentPosition = { 3_500 },
+                    onLineClicked = {},
+                    onLinePressed = {},
+                    isManualScrolling = false,
+                    normalLineTextStyle = TextStyle(fontSize = 28.sp, fontWeight = FontWeight.Bold),
+                    phoneticTextStyle = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Normal),
+                    translationLineTextStyle = translationStyle,
+                    useBlurEffect = false,
+                    offset = 32.dp,
+                    keepAliveZone = 0.dp,
+                )
+            }
+        }
+    }
+
+    @Test
+    fun wrappedSyncedTranslationsKeepEnoughSpaceAtLargeFontSizes() {
+        assertTranslationLineSpacing(
+            SyncedLine("Primary lyric", multilineTranslation, 1_000, 5_000)
+        )
+    }
+
+    @Test
+    fun wrappedKaraokeTranslationsKeepEnoughSpaceAtLargeFontSizes() {
+        assertTranslationLineSpacing(
+            KaraokeLine.MainKaraokeLine(
+                syllables = listOf(KaraokeSyllable("Primary lyric", 1_000, 5_000)),
+                translation = multilineTranslation,
+                alignment = KaraokeAlignment.Start,
+                start = 1_000,
+                end = 5_000,
+            )
+        )
+    }
+
+    private fun assertTranslationLineSpacing(line: ISyncedLine) {
+        // Reproduce the fixed theme line height inherited by the preference caller.
+        val translationStyle = mutableStateOf(TextStyle(fontSize = 18.sp, lineHeight = 24.sp))
+        val fontScale = mutableStateOf(1f)
+        compose.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale.value)) {
+                TranslationTestContent(line, translationStyle.value)
+            }
+        }
+
+        for ((size, scale) in listOf(18 to 1f, 32 to 1f, 32 to 1.5f, 18 to 1f)) {
+            compose.runOnIdle {
+                translationStyle.value = translationStyle.value.copy(
+                    fontSize = size.sp,
+                    fontWeight = if (size == 32) FontWeight.Bold else FontWeight.Normal,
+                )
+                fontScale.value = scale
+            }
+            val results = mutableListOf<TextLayoutResult>()
+            compose.onNodeWithText(multilineTranslation, useUnmergedTree = true)
+                .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+            val result = results.single()
+            assertTrue("Translation must exercise both wrapping and explicit newlines", result.lineCount >= 3)
+            val fontSizePx = with(result.layoutInput.density) { size.sp.toPx() }
+            for (index in 1 until result.lineCount) {
+                val baselineDistance = result.getLineBaseline(index) - result.getLineBaseline(index - 1)
+                assertTrue(
+                    "Translation baselines must fit ${size}sp glyphs at font scale $scale",
+                    baselineDistance >= fontSizePx,
+                )
+            }
+        }
+    }
+
+    private val multilineTranslation =
+        "大字号翻译歌词需要自动换行，前后两行文字不应重叠。\n第二段翻译歌词也应保留足够的行距。"
+
+    private fun assertTypography(text: String, sizeSp: Int, weight: FontWeight) {
+        val results = mutableListOf<TextLayoutResult>()
+        compose.onNodeWithText(text, useUnmergedTree = true)
+            .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+        assertEquals(1, results.size)
+        assertEquals(sizeSp.sp, results.single().layoutInput.style.fontSize)
+        assertEquals(weight, results.single().layoutInput.style.fontWeight)
+    }
+
+    @Test
+    fun zeroEdgeFadesRemoveTheMaskFromTheFirstVisibleLine() {
+        val fade = mutableStateOf(70.dp)
+        compose.setContent {
+            MaterialTheme {
+                Box(Modifier.width(260.dp).height(240.dp).background(Color.Black).testTag("edge-fade")) {
+                    PlayerLyricsView(
+                        listState = rememberLazyListState(),
+                        lyrics = SyncedLyrics(lines = listOf(SyncedLine("MMMM", null, 1_000, 5_000))),
+                        currentPosition = { 3_500 },
+                        onLineClicked = {}, onLinePressed = {}, isManualScrolling = false,
+                        normalLineTextStyle = TextStyle(fontSize = 28.sp, fontWeight = FontWeight.Bold),
+                        useBlurEffect = false, showPhonetic = false,
+                        offset = 0.dp, keepAliveZone = 0.dp,
+                        topFadeHeight = fade.value, bottomFadeHeight = fade.value,
+                    )
+                }
+            }
+        }
+        fun brightestPixel(): Float {
+            val pixels = compose.onNodeWithTag("edge-fade").captureToImage().toPixelMap()
+            var result = 0f
+            for (y in 0 until pixels.height) for (x in 0 until pixels.width) {
+                result = maxOf(result, pixels[x, y].luminance())
+            }
+            return result
+        }
+        val masked = brightestPixel()
+        compose.runOnIdle { fade.value = 0.dp }
+        val unmasked = brightestPixel()
+        assertTrue("Zero fades must bypass the edge mask", unmasked > masked + 0.15f)
+        assertTrue("Unmasked focused text must retain its full brightness", unmasked > 0.95f)
+    }
+
+    @Test
+    fun lyricEntryTranslationIsAppliedOnceToTheContent() {
+        val offset = mutableStateOf(0.dp)
+        compose.setContent {
+            MaterialTheme {
+                Box(Modifier.width(260.dp).height(300.dp)) {
+                    PlayerLyricsView(
+                        listState = rememberLazyListState(),
+                        lyrics = SyncedLyrics(lines = listOf(SyncedLine("Entry lyric", null, 1_000, 5_000))),
+                        currentPosition = { 3_500 },
+                        onLineClicked = {}, onLinePressed = {}, isManualScrolling = false,
+                        useBlurEffect = false, showPhonetic = false,
+                        offset = 0.dp, keepAliveZone = 0.dp,
+                        topFadeHeight = 0.dp, bottomFadeHeight = 0.dp,
+                        contentModifier = Modifier.graphicsLayer { translationY = offset.value.toPx() },
+                    )
+                }
+            }
+        }
+        val initial = compose.onNodeWithText("Entry lyric", useUnmergedTree = true).getUnclippedBoundsInRoot().top
+        compose.runOnIdle { offset.value = 24.dp }
+        val translated = compose.onNodeWithText("Entry lyric", useUnmergedTree = true).getUnclippedBoundsInRoot().top
+        assertEquals(24f, (translated - initial).value, 0.5f)
+    }
+
+    @Test
+    fun aTopOnlyFadeKeepsLyricsNearTheBottomFullyVisible() {
+        compose.setContent {
+            MaterialTheme {
+                Box(Modifier.width(260.dp).height(240.dp).background(Color.Black).testTag("top-only-fade")) {
+                    PlayerLyricsView(
+                        listState = rememberLazyListState(),
+                        lyrics = SyncedLyrics(lines = listOf(SyncedLine("MMMM", null, 1_000, 5_000))),
+                        currentPosition = { 3_500 },
+                        onLineClicked = {}, onLinePressed = {}, isManualScrolling = false,
+                        normalLineTextStyle = TextStyle(fontSize = 28.sp, fontWeight = FontWeight.Bold),
+                        useBlurEffect = false, showPhonetic = false,
+                        offset = 180.dp, keepAliveZone = 0.dp,
+                        topFadeHeight = 100.dp, bottomFadeHeight = 0.dp,
+                    )
+                }
+            }
+        }
+        compose.onNodeWithText("MMMM", useUnmergedTree = true).assertIsDisplayed()
+        val pixels = compose.onNodeWithTag("top-only-fade").captureToImage().toPixelMap()
+        var brightest = 0f
+        for (y in pixels.height / 2 until pixels.height) for (x in 0 until pixels.width) {
+            brightest = maxOf(brightest, pixels[x, y].luminance())
+        }
+        assertTrue("A zero bottom fade must not dim the lower lyric line", brightest > 0.95f)
+    }
+
+    @Test
+    fun controlsGradientExposesTheBackgroundAndRestoresLyricsAfterDismissal() {
+        val controlsVisible = mutableStateOf(true)
+        val background = Color(0.10f, 0.25f, 0.40f)
+        compose.setContent {
+            MaterialTheme {
+                Box(Modifier.width(260.dp).height(260.dp).background(background).testTag("controls-background")) {
+                    PlayerLyricsView(
+                        listState = rememberLazyListState(),
+                        lyrics = SyncedLyrics(lines = listOf(SyncedLine("MMMM", null, 1_000, 5_000))),
+                        currentPosition = { 3_500 },
+                        onLineClicked = {}, onLinePressed = {}, isManualScrolling = false,
+                        normalLineTextStyle = TextStyle(fontSize = 28.sp, fontWeight = FontWeight.Bold),
+                        useBlurEffect = false, showPhonetic = false,
+                        offset = 180.dp, keepAliveZone = 0.dp,
+                        topFadeHeight = 0.dp, bottomFadeHeight = 0.dp,
+                        controlsFadeRange = { height ->
+                            val shift = if (controlsVisible.value) 0f else 0.6f
+                            ((0.4f + shift) * height)..((0.55f + shift) * height)
+                        },
+                    )
+                }
+            }
+        }
+        fun brightestRed(): Float {
+            val pixels = compose.onNodeWithTag("controls-background").captureToImage().toPixelMap()
+            var result = 0f
+            for (y in 0 until pixels.height) for (x in 0 until pixels.width) {
+                result = maxOf(result, pixels[x, y].red)
+                assertTrue("The mask must not clear the player's background", pixels[x, y].blue >= background.blue - 0.02f)
+            }
+            return result
+        }
+        assertEquals(background.red, brightestRed(), 0.02f)
+        compose.runOnIdle { controlsVisible.value = false }
+        assertTrue("Lyrics must reappear when controls leave", brightestRed() > background.red + 0.6f)
     }
 }

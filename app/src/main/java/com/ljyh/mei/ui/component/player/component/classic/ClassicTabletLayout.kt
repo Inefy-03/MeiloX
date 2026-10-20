@@ -46,6 +46,9 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.ljyh.mei.constants.PlayerHorizontalPadding
+import com.ljyh.mei.constants.PlayerStyle
+import com.ljyh.mei.constants.PlayerStyleKey
+import com.ljyh.mei.ui.component.player.component.applemusic.AppleMusicDimensions
 import com.ljyh.mei.constants.ProgressBarStyle
 import com.ljyh.mei.constants.ProgressBarStyleKey
 import com.ljyh.mei.constants.TabletAnimationStyle
@@ -79,6 +82,7 @@ fun ClassicTabletLayout(
     val duration by remember { derivedStateOf { stateContainer.duration } }
     val lyricLine by remember { derivedStateOf { stateContainer.lyricLine } }
     val isLiked by stateContainer.isLiked
+    val playerStyle by rememberEnumPreference(PlayerStyleKey, PlayerStyle.AppleMusic)
 
     var isShowingPlaylist by remember { mutableStateOf(false) }
 
@@ -134,6 +138,8 @@ fun ClassicTabletLayout(
                 mediaMetadata?.let {
                     PlayerHeader(
                         mediaMetadata = it,
+                        needShadow = playerStyle != PlayerStyle.AppleMusic,
+                        appleMusicStyle = playerStyle == PlayerStyle.AppleMusic,
                         modifier = Modifier
                             .fillMaxWidth(0.7f)
                             .padding(horizontal = PlayerHorizontalPadding),
@@ -162,7 +168,7 @@ fun ClassicTabletLayout(
                         },
                         modifier = Modifier
                             .fillMaxWidth(0.7f)
-                            .padding(horizontal = PlayerHorizontalPadding + 8.dp)
+                            .padding(horizontal = if (playerStyle == PlayerStyle.AppleMusic) AppleMusicDimensions.progressInset else PlayerHorizontalPadding + 8.dp)
                     )
                 } else {
                     PlayerProgressSlider(
@@ -213,12 +219,16 @@ fun ClassicTabletLayout(
                 val lyricContent = @Composable {
                     LyricScreen(
                         lyricData = lyricLine,
+                        showSourceBadge = playerStyle != PlayerStyle.AppleMusic,
+                        topFadeHeight = if (playerStyle == PlayerStyle.AppleMusic) AppleMusicDimensions.lyricTopFade else 20.dp,
+                        bottomFadeHeight = if (playerStyle == PlayerStyle.AppleMusic) AppleMusicDimensions.lyricBottomFade else 100.dp,
+                        rendererVerticalPadding = if (playerStyle == PlayerStyle.AppleMusic) 0.dp else 8.dp,
                         playerConnection = stateContainer.playerConnection,
                         contentPadding = PaddingValues(
-                            start = PlayerHorizontalPadding,
-                            end = PlayerHorizontalPadding + 32.dp,
-                            top = lyricVerticalPadding,
-                            bottom = lyricVerticalPadding,
+                            start = PlayerHorizontalPadding + if (playerStyle == PlayerStyle.AppleMusic) 1.dp else 0.dp,
+                            end = PlayerHorizontalPadding + 32.dp + if (playerStyle == PlayerStyle.AppleMusic) 1.dp else 0.dp,
+                            top = if (playerStyle == PlayerStyle.AppleMusic) 0.dp else lyricVerticalPadding,
+                            bottom = if (playerStyle == PlayerStyle.AppleMusic) 0.dp else lyricVerticalPadding,
                         ),
                         sourceBadgeEndOffset = -badgeEndPadding,
                         sourceBadgeBottomPadding = badgeBottomPadding,
