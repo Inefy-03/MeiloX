@@ -29,6 +29,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.structuralEqualityPolicy
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.drawBehind
@@ -161,10 +162,15 @@ internal class PlayerSheetLayers(
     }
     val targetArtwork get() = targetArtworkGeometry.bounds
     val targetArtworkLayoutSize get() = targetArtworkGeometry.layoutSize
-    val sharesArtwork get() = isTransitioning && playerSharesArtwork(
-        true, sharedArtworkEnabled, artworkSourceAvailable,
-        sourceArtwork, targetArtwork, hostBounds,
-    )
+    // Ownership only changes when eligibility changes. Its geometry may read the
+    // press-release progress, but endpoint display lists need no per-frame invalidation.
+    private val artworkOwnership = derivedStateOf(structuralEqualityPolicy()) {
+        isTransitioning && playerSharesArtwork(
+            true, sharedArtworkEnabled, artworkSourceAvailable,
+            sourceArtwork, targetArtwork, hostBounds,
+        )
+    }
+    val sharesArtwork get() = artworkOwnership.value
 
     private fun openingBounds(layoutBounds: Rect): Rect {
         val layout = frozenContainer ?: return layoutBounds
@@ -492,6 +498,13 @@ fun BottomSheet(
     val expanded by remember(state) { derivedStateOf { state.isExpanded } }
     val collapsed by remember(state) { derivedStateOf { state.isCollapsed } }
     val dismissed by remember(state) { derivedStateOf { state.isDismissed } }
+    // The hidden mini host stays at the collapsed anchor through normal player
+    // motion. Preserve live relocation/dismiss offsets without placing it every frame.
+    val miniAnchor by remember(state) {
+        derivedStateOf(structuralEqualityPolicy()) {
+            if (state.progress == 0f && !state.isDragging) state.value else state.collapsedBound
+        }
+    }
     val transitionGeometryReady by remember(layers) {
         derivedStateOf { layers.hostBounds.isUsable() && layers.sourceContainer.isUsable() }
     }
@@ -511,8 +524,7 @@ fun BottomSheet(
                 Modifier.fillMaxWidth()
                     .height(if (collapsedDragHeight > 0.dp) collapsedDragHeight else state.collapsedBound)
                     .offset {
-                        val anchor = if (state.progress == 0f && !state.isDragging) state.value else state.collapsedBound
-                        IntOffset(0, (state.expandedBound - anchor + collapsedDragOffset()).roundToPx())
+                        IntOffset(0, (state.expandedBound - miniAnchor + collapsedDragOffset()).roundToPx())
                     }
                     .clipPlayerRecordingHost(layers, expandedCornerRadius)
                     .sheetGestures(state, layers, onHorizontalSwipe)

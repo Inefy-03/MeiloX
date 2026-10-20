@@ -35,6 +35,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layout
@@ -91,7 +92,7 @@ private data class StableGlassTabItems<T>(
     val values: List<GlassTabItem<T>>,
 )
 
-private val LocalLiquidTabScale = staticCompositionLocalOf { { 1f } }
+internal val LocalLiquidTabScale = staticCompositionLocalOf { { 1f } }
 
 /** Shared compact icon endpoint for the bottom navigation and its adjacent search control. */
 val CompactBottomControlIconSize = 22.dp
@@ -121,12 +122,19 @@ private fun compactIndicatorVisibility(compactProgress: Float): Float {
     return 1f - FastOutSlowInEasing.transform(fadeProgress)
 }
 
-private fun compactIconLateProgress(compactProgress: Float): Float {
+internal fun compactIconLateProgress(compactProgress: Float): Float {
     if (compactProgress <= CompactIndicatorFadeStart) return 0f
     val morphProgress = ((compactProgress - CompactIndicatorFadeStart) /
         (1f - CompactIndicatorFadeStart)).coerceIn(0f, 1f)
     return FastOutSlowInEasing.transform(morphProgress)
 }
+
+/** An opaque parent accent tint already supplies the selected source's RGB. */
+internal fun navigationLensSourceColorFilter(
+    colors: GlassColors,
+    selectedFilter: State<ColorFilter>,
+): State<ColorFilter>? =
+    if (colors.accent.alpha == 1f && colors.content.alpha == 1f) null else selectedFilter
 
 /**
  * iOS split-search tab bar backed by AndroidLiquidGlass' complete three-layer interaction.
@@ -330,6 +338,9 @@ fun <T> GlassBottomBar(
                 )
             }
         }
+        val hiddenSelectedIconColorFilterState = navigationLensSourceColorFilter(
+            colors, selectedIconColorFilterState,
+        )
         val lensSourceAccentFilter = remember(colors.accent) {
             ColorFilter.tint(colors.accent)
         }
@@ -697,7 +708,7 @@ fun <T> GlassBottomBar(
                             horizontalInsetPx = paddingPx,
                             selectedContentLateScale = selectedContentLateScaleProvider,
                             labelAlpha = tabContentAlpha,
-                            selectedIconColorFilter = selectedIconColorFilterState,
+                            selectedIconColorFilter = hiddenSelectedIconColorFilterState,
                             contentColor = colors.content,
                         )
                     }
@@ -848,7 +859,7 @@ private fun Modifier.collapseVertically(fraction: Float): Modifier = layout { me
 }
 
 @Composable
-private fun <T> BoxScope.MorphingSelectedNavigationItem(
+internal fun <T> BoxScope.MorphingSelectedNavigationItem(
     item: GlassTabItem<T>,
     compactProgress: State<Float>,
     fullWidthPx: Float,
@@ -859,7 +870,7 @@ private fun <T> BoxScope.MorphingSelectedNavigationItem(
     horizontalInsetPx: Float,
     selectedContentLateScale: () -> Float,
     labelAlpha: () -> Float,
-    selectedIconColorFilter: State<ColorFilter>,
+    selectedIconColorFilter: State<ColorFilter>?,
     contentColor: Color,
 ) {
     val sharedTabScale = LocalLiquidTabScale.current
@@ -909,7 +920,16 @@ private fun <T> BoxScope.MorphingSelectedNavigationItem(
         Column(
             modifier = Modifier
                 .width(selectedTabWidth)
-                .fillMaxHeight(),
+                .fillMaxHeight()
+                .then(
+                    if (selectedIconColorFilter == null) {
+                        // Keep native icon/text rasterization before the outer morph
+                        // scale, using one shared texture instead of two tint layers.
+                        Modifier.graphicsLayer {
+                            compositingStrategy = CompositingStrategy.Offscreen
+                        }
+                    } else Modifier,
+                ),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {

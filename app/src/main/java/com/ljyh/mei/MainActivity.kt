@@ -64,7 +64,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -81,6 +80,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.TextFieldValue
@@ -569,8 +569,19 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     val imeInsets = WindowInsets.ime
-                    val searchBottomInset = maxOf(with(density) { imeInsets.getBottom(this).toDp() },
-                        WindowInsets.systemBars.asPaddingValues().calculateBottomPadding())
+                    // Keep IME animation reads in measurement instead of recomposing the page.
+                    // Plain padding retains the existing unconsumed-inset behavior.
+                    val searchBottomInsets = remember(imeInsets, windowsInsets) {
+                        imeInsets.union(windowsInsets).only(WindowInsetsSides.Bottom)
+                    }
+                    val searchResultsBottomPadding = remember(searchBottomInsets, density) {
+                        searchBottomInsets.add(WindowInsets(bottom = NavigationBarHeight))
+                            .asPaddingValues(density)
+                    }
+                    val searchToolbarBottomPadding = remember(searchBottomInsets, density) {
+                        searchBottomInsets.add(WindowInsets(bottom = NavigationBarBottomMargin))
+                            .asPaddingValues(density)
+                    }
 
                     val bottomInset by remember {
                         derivedStateOf {
@@ -691,7 +702,11 @@ class MainActivity : ComponentActivity() {
                     }
                     val pageDarkAppearance = currentRoute?.let { pageAppearanceOverrides[it]?.second }
                     val statusBarDark = isPlayerPage || (pageDarkAppearance ?: effectiveDark)
-                    SideEffect {
+                    val windowConfiguration = LocalConfiguration.current
+                    DisposableEffect(
+                        window, windowInsetsController, windowConfiguration,
+                        isPlayerPage, statusBarDark, effectiveDark, keepScreenOnInPlayer,
+                    ) {
                         val transparent = android.graphics.Color.TRANSPARENT
                         enableEdgeToEdge(
                             statusBarStyle = if (isPlayerPage) {
@@ -709,16 +724,20 @@ class MainActivity : ComponentActivity() {
                         // retain the previous appearance while the bottom sheet settles.
                         windowInsetsController.isAppearanceLightStatusBars =
                             !statusBarDark
-                        if (isPlayerPage && keepScreenOnInPlayer) {
-                            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                        } else {
-                            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        // Even an unchanged flag dispatches window attributes and a traversal.
+                        val keepScreenOnFlag = WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                        val wantsScreenOn = isPlayerPage && keepScreenOnInPlayer
+                        val hasScreenOn = window.attributes.flags and keepScreenOnFlag != 0
+                        if (hasScreenOn != wantsScreenOn) {
+                            if (wantsScreenOn) window.addFlags(keepScreenOnFlag)
+                            else window.clearFlags(keepScreenOnFlag)
                         }
                         // Keep the navigation bar transparent instead of applying the platform
                         // contrast scrim.
                         window.navigationBarColor = transparent
                         window.isNavigationBarContrastEnforced = false
                         window.navigationBarDividerColor = transparent
+                        onDispose { }
                     }
                     val (query, onQueryChange) = rememberSaveable(stateSaver = TextFieldValue.Saver) {
                         mutableStateOf(TextFieldValue())
@@ -1011,7 +1030,7 @@ class MainActivity : ComponentActivity() {
                                                     modifier = Modifier
                                                         .fillMaxSize()
                                                         .padding(top = windowsInsets.asPaddingValues().calculateTopPadding())
-                                                        .padding(bottom = searchBottomInset + NavigationBarHeight),
+                                                        .padding(searchResultsBottomPadding),
                                                 )
                                             }
                                         }
@@ -1046,7 +1065,7 @@ class MainActivity : ComponentActivity() {
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .padding(horizontal = 20.dp)
-                                        .padding(bottom = searchBottomInset + NavigationBarBottomMargin),
+                                        .padding(searchToolbarBottomPadding),
                                 )
                             }
                         }
