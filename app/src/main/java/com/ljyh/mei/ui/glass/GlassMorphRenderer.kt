@@ -195,11 +195,14 @@ internal class GlassMorphRenderer(
         highlight.setFloatUniform("opacity", highlightAlpha)
         // This rectangle anchors the light field; only the moving glass outline clips it.
         val lightBounds = pressHighlightBounds ?: bounds
-        val lightPosition = pressHighlight?.position ?: Offset(0.5f, 0.5f)
+        val lightPosition = (pressHighlight?.position ?: Offset(0.5f, 0.5f)).let {
+            if (pressHighlightBounds != null) it
+            else Offset(it.x.coerceIn(0f, 1f), it.y.coerceIn(0f, 1f))
+        }
         highlight.setFloatUniform(
             "pressPosition",
-            lightBounds.left + lightBounds.width * lightPosition.x.coerceIn(0f, 1f),
-            lightBounds.top + lightBounds.height * lightPosition.y.coerceIn(0f, 1f),
+            lightBounds.left + lightBounds.width * lightPosition.x,
+            lightBounds.top + lightBounds.height * lightPosition.y,
         )
         highlight.setFloatUniform("pressRadius", (lightBounds.size.minDimension * 1.5f).coerceAtLeast(1f))
         highlight.setFloatUniform(
@@ -237,6 +240,7 @@ internal class GlassMorphRenderer(
                             source.height * pressHighlight.position.y,
                         ),
                         sourceBounds = source,
+                        clampPosition = pressHighlightBounds == null,
                     )
                 }
             }
