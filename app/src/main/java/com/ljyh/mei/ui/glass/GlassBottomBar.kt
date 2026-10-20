@@ -39,8 +39,11 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.platform.ViewConfiguration
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -50,6 +53,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.constrainWidth
 import androidx.compose.ui.unit.constrainHeight
 import androidx.compose.ui.unit.dp
@@ -98,6 +102,34 @@ internal val LocalLiquidTabScale = staticCompositionLocalOf { { 1f } }
 val CompactBottomControlIconSize = 22.dp
 
 private val ExpandedNavigationIconSize = 28.dp
+private val ExpandedNavigationItemHeight = 56.dp
+private val ExpandedNavigationItemMinWidth = 75.dp
+private val NavigationItemIconClearance = 4.dp
+
+private data class NavigationTabGeometry(val widthPx: Float, val stepPx: Float) {
+    fun center(index: Float): Float = widthPx / 2f + index * stepPx
+}
+
+private fun navigationTabGeometry(
+    contentWidthPx: Float,
+    itemCount: Int,
+    minimumWidthPx: Float,
+    protectedIconRadiusPx: Float,
+): NavigationTabGeometry {
+    val availableWidth = contentWidthPx.coerceAtLeast(1f)
+    // width / 2 + protectedIconRadius must not exceed the center-to-center step.
+    val maximumWidth = if (itemCount > 1) {
+        (2f * (availableWidth - (itemCount - 1) * protectedIconRadiusPx) / (itemCount + 1))
+            .coerceIn(1f, availableWidth)
+    } else availableWidth
+    val width = (availableWidth / itemCount)
+        .coerceAtLeast(minimumWidthPx)
+        .coerceAtMost(maximumWidth)
+    // Keep the outer edges inside the capsule; narrow bars overlap adjacent items.
+    val step = if (itemCount > 1) (availableWidth - width) / (itemCount - 1) else 0f
+    return NavigationTabGeometry(width, step)
+}
+
 private val NavigationLabelStyle: TextStyle
     @Composable
     @ReadOnlyComposable
@@ -181,6 +213,16 @@ fun <T> GlassBottomBar(
     val tabsBackdrop = rememberLayerBackdrop()
     val indicatorBackdrop = rememberCombinedBackdrop(backdrop, tabsBackdrop)
     val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
+    val viewConfiguration = LocalViewConfiguration.current
+    val navigationViewConfiguration = remember(viewConfiguration) {
+        object : ViewConfiguration by viewConfiguration {
+            // Horizontal auto-expansion would defeat the neighbor icon clearance.
+            override val minimumTouchTargetSize = DpSize(
+                0.dp,
+                viewConfiguration.minimumTouchTargetSize.height,
+            )
+        }
+    }
     val animationScope = rememberCoroutineScope()
     val onExpandState = rememberUpdatedState(onExpand)
     val selectedIndexState = rememberUpdatedState(selectedIndex)
@@ -209,10 +251,19 @@ fun <T> GlassBottomBar(
             }
         }
         val paddingPx = with(density) { 4.dp.toPx() }
-        val expandedTabWidthPx = ((fullWidthPx - paddingPx * 2f) / tabItems.size)
-            .coerceAtLeast(1f)
+        val expandedTabs = remember(fullWidthPx, paddingPx, density, tabItems.size) {
+            navigationTabGeometry(
+                contentWidthPx = fullWidthPx - paddingPx * 2f,
+                itemCount = tabItems.size,
+                minimumWidthPx = with(density) { ExpandedNavigationItemMinWidth.toPx() },
+                protectedIconRadiusPx = with(density) {
+                    ExpandedNavigationIconSize.toPx() / 2f + NavigationItemIconClearance.toPx()
+                },
+            )
+        }
+        val expandedTabWidthPx = expandedTabs.widthPx
         val compactInnerWidthPx = (compactWidthPx - paddingPx * 2f).coerceAtLeast(1f)
-        val tabWidthPx = expandedTabWidthPx
+        val tabStepPx = rememberUpdatedState(expandedTabs.stepPx.coerceAtLeast(1f))
         val innerGlassVisibilityState = remember(compactState) {
             derivedStateOf { compactIndicatorVisibility(compactState.value) }
         }
@@ -225,13 +276,28 @@ fun <T> GlassBottomBar(
                 val width = constraints.constrainWidth((if (settled) compactWidthPx else
                     lerp(expandedTabWidthPx, compactInnerWidthPx, progress)).roundToInt())
                 val height = constraints.constrainHeight((if (settled) compactSize else
-                    androidx.compose.ui.unit.lerp(56.dp, compactSize - 8.dp, progress)).roundToPx())
+                    androidx.compose.ui.unit.lerp(ExpandedNavigationItemHeight, compactSize - 8.dp, progress)).roundToPx())
                 val placeable = measurable.measure(androidx.compose.ui.unit.Constraints.fixed(width, height))
                 layout(width, height) { placeable.placeRelative(0, 0) }
             }
         }
+        val indicatorHitBoundsModifier = remember(compactState, expandedTabs, tabItems.size) {
+            Modifier.layout { measurable, constraints ->
+                val overlap = (expandedTabs.widthPx - expandedTabs.stepPx).coerceAtLeast(0f) *
+                    (1f - compactState.value) / 2f
+                val startInset = if (selectedIndexState.value > 0) overlap.roundToInt() else 0
+                val endInset = if (selectedIndexState.value < tabItems.lastIndex) overlap.roundToInt() else 0
+                val width = (constraints.maxWidth - startInset - endInset).coerceAtLeast(1)
+                val placeable = measurable.measure(
+                    androidx.compose.ui.unit.Constraints.fixed(width, constraints.maxHeight),
+                )
+                layout(constraints.maxWidth, constraints.maxHeight) {
+                    placeable.placeRelative(startInset, 0)
+                }
+            }
+        }
         val offsetAnimation = remember { Animatable(0f) }
-        val dragAnimation = remember(animationScope, tabItems.size) {
+        val dragAnimation = remember(animationScope, tabItems.size, isLtr) {
             DampedDragAnimation(
                 animationScope = animationScope,
                 initialValue = selectedIndexState.value.toFloat(),
@@ -258,7 +324,7 @@ fun <T> GlassBottomBar(
                 onDrag = { _, dragAmount ->
                     if (compactState.value >= 0.74f) return@DampedDragAnimation
                     updateValue(
-                        (targetValue + dragAmount.x / tabWidthPx * if (isLtr) 1f else -1f)
+                        (targetValue + dragAmount.x / tabStepPx.value * if (isLtr) 1f else -1f)
                             .fastCoerceIn(0f, tabItems.lastIndex.toFloat()),
                     )
                     animationScope.launch { offsetAnimation.snapTo(offsetAnimation.value + dragAmount.x) }
@@ -276,19 +342,18 @@ fun <T> GlassBottomBar(
             fullWidthPx,
             compactWidthPx,
             paddingPx,
-            tabItems.size,
+            expandedTabs,
+            dragAnimation,
         ) {
             InteractiveHighlight(
                 animationScope = animationScope,
                 position = { size, _ ->
                     val progress = compactState.value
-                    val currentWidth = morphSurfaceWidthPx(fullWidthPx, compactWidthPx, progress)
-                    val currentTabWidth =
-                        ((currentWidth - paddingPx * 2f) / tabItems.size).coerceAtLeast(1f)
+                    val expandedTabCenter = expandedTabs.center(dragAnimation.value)
                     val tabCenter = if (isLtr) {
-                        paddingPx + (dragAnimation.value + 0.5f) * currentTabWidth
+                        paddingPx + expandedTabCenter
                     } else {
-                        currentWidth - paddingPx - (dragAnimation.value + 0.5f) * currentTabWidth
+                        fullWidthPx - paddingPx - expandedTabCenter
                     }
                     val morphCenter = lerp(tabCenter, compactWidthPx / 2f, progress)
                     val fraction = (offsetAnimation.value / fullWidthPx).fastCoerceIn(-1f, 1f)
@@ -480,19 +545,18 @@ fun <T> GlassBottomBar(
             paddingPx,
             expandedTabWidthPx,
             compactInnerWidthPx,
-            tabItems.size,
+            expandedTabs,
         ) {
             {
                 // Follow the current tab center while the capsule shrinks, then converge to
                 // the compact center. This keeps the first, middle and last tabs symmetric.
                 val progress = compactState.value
                 val currentWidth = morphSurfaceWidthPx(fullWidthPx, compactWidthPx, progress)
-                val currentTabWidth =
-                    ((currentWidth - paddingPx * 2f) / tabItems.size).coerceAtLeast(1f)
+                val expandedTabCenter = expandedTabs.center(dragAnimation.value)
                 val tabCenter = if (isLtr) {
-                    paddingPx + (dragAnimation.value + 0.5f) * currentTabWidth
+                    paddingPx + expandedTabCenter
                 } else {
-                    currentWidth - paddingPx - (dragAnimation.value + 0.5f) * currentTabWidth
+                    fullWidthPx - paddingPx - expandedTabCenter
                 }
                 val indicatorWidth = if (progress >= CompactIndicatorFadeEnd) {
                     compactWidthPx
@@ -615,7 +679,10 @@ fun <T> GlassBottomBar(
 
         // Keep both layers on the same navigation morph while limiting the press magnification
         // to the hidden Lens source.
-        CompositionLocalProvider(LocalLiquidTabScale provides visibleTabContentScale) {
+        CompositionLocalProvider(
+            LocalLiquidTabScale provides visibleTabContentScale,
+            LocalViewConfiguration provides navigationViewConfiguration,
+        ) {
             Row(
                 modifier = Modifier
                     .then(surfaceSizeModifier)
@@ -632,17 +699,18 @@ fun <T> GlassBottomBar(
                         .weight(1f)
                         .fillMaxHeight(),
                 ) {
-                    Row(Modifier.fillMaxSize()) {
-                        FullTabContent(
-                            items = stableItems,
-                            selectedKey = selectedItem.key,
-                            onSelected = stableOnSelected,
-                            enabled = !compactMode,
-                            alpha = tabContentAlpha,
-                            selectedColorFilter = selectedIconColorFilterState,
-                            hideSelectedItem = true,
-                        )
-                    }
+                    FullTabContent(
+                        items = stableItems,
+                        selectedKey = selectedItem.key,
+                        onSelected = stableOnSelected,
+                        enabled = !compactMode,
+                        alpha = tabContentAlpha,
+                        selectedColorFilter = selectedIconColorFilterState,
+                        hideSelectedItem = true,
+                        expandedTabWidthPx = expandedTabWidthPx,
+                        compactTabWidthPx = compactInnerWidthPx / tabItems.size,
+                        compactProgress = compactState,
+                    )
                     MorphingSelectedNavigationItem(
                         item = selectedItem,
                         compactProgress = compactState,
@@ -662,7 +730,10 @@ fun <T> GlassBottomBar(
         }
 
         if (!indicatorSettled && appearance.usesRefraction) {
-            CompositionLocalProvider(LocalLiquidTabScale provides lensSourceTabContentScale) {
+            CompositionLocalProvider(
+                LocalLiquidTabScale provides lensSourceTabContentScale,
+                LocalViewConfiguration provides navigationViewConfiguration,
+            ) {
                 Row(
                     modifier = Modifier
                         .clearAndSetSemantics {}
@@ -682,21 +753,22 @@ fun <T> GlassBottomBar(
                             .fillMaxHeight()
                             .then(lensSourceAccentModifier),
                     ) {
-                        Row(Modifier.fillMaxSize()) {
-                            FullTabContent(
-                                items = stableItems,
-                                selectedKey = selectedItem.key,
-                                onSelected = stableOnSelected,
-                                // Keep the exported source interactive just like LiquidBottomTabs. It
-                                // is visually hidden, but it sits above the visible row in the hit-test tree.
-                                // The source content is accent-filtered as one unit so every item
-                                // sampled through the Lens uses the same emphasis color.
-                                enabled = !compactMode,
-                                alpha = tabContentAlpha,
-                                selectedColorFilter = selectedIconColorFilterState,
-                                hideSelectedItem = true,
-                            )
-                        }
+                        FullTabContent(
+                            items = stableItems,
+                            selectedKey = selectedItem.key,
+                            onSelected = stableOnSelected,
+                            // Keep the exported source interactive just like LiquidBottomTabs. It
+                            // is visually hidden, but it sits above the visible row in the hit-test tree.
+                            // The source content is accent-filtered as one unit so every item
+                            // sampled through the Lens uses the same emphasis color.
+                            enabled = !compactMode,
+                            alpha = tabContentAlpha,
+                            selectedColorFilter = selectedIconColorFilterState,
+                            hideSelectedItem = true,
+                            expandedTabWidthPx = expandedTabWidthPx,
+                            compactTabWidthPx = compactInnerWidthPx / tabItems.size,
+                            compactProgress = compactState,
+                        )
                         MorphingSelectedNavigationItem(
                             item = selectedItem,
                             compactProgress = compactState,
@@ -716,73 +788,132 @@ fun <T> GlassBottomBar(
             }
         }
 
-        Box(
-            modifier = Modifier
-                .graphicsLayer(indicatorPositionLayerBlock)
-                .then(interactiveHighlight.gestureModifier)
-                .then(dragAnimation.modifier)
-                .then(indicatorBackdropModifier)
-                .then(indicatorSizeModifier)
-                .then(
-                    if (compactMode) {
-                        Modifier
-                            .clickable(
-                                interactionSource = null,
-                                indication = null,
-                                role = Role.Tab,
-                                onClick = { onExpandState.value() },
-                            )
-                            .semantics(mergeDescendants = true) {
-                                contentDescription = selectedItem.contentDescription
-                            }
-                    } else {
-                        Modifier
-                    },
-                ),
-        )
+        CompositionLocalProvider(LocalViewConfiguration provides navigationViewConfiguration) {
+            Box(
+                modifier = Modifier
+                    .graphicsLayer(indicatorPositionLayerBlock)
+                    .then(indicatorBackdropModifier)
+                    .then(indicatorSizeModifier)
+                    .then(indicatorHitBoundsModifier)
+                    .then(interactiveHighlight.gestureModifier)
+                    .then(dragAnimation.modifier)
+                    .then(
+                        if (compactMode) {
+                            Modifier
+                                .clickable(
+                                    interactionSource = null,
+                                    indication = null,
+                                    role = Role.Tab,
+                                    onClick = { onExpandState.value() },
+                                )
+                                .semantics(mergeDescendants = true) {
+                                    contentDescription = selectedItem.contentDescription
+                                }
+                        } else {
+                            Modifier
+                        },
+                    ),
+            )
+        }
     }
 }
 
 @Composable
-private fun <T> androidx.compose.foundation.layout.RowScope.FullTabContent(
+private fun <T> FullTabContent(
     items: StableGlassTabItems<T>,
     selectedKey: T,
     onSelected: (T) -> Unit,
     enabled: Boolean,
     alpha: () -> Float,
     selectedColorFilter: State<ColorFilter>,
+    expandedTabWidthPx: Float,
+    compactTabWidthPx: Float,
+    compactProgress: State<Float>,
     hideSelectedItem: Boolean = false,
 ) {
-    val colors = LocalGlassColors.current
     val scale = LocalLiquidTabScale.current
-    items.values.forEach { item ->
-        val selected = item.key == selectedKey
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight()
-                .clip(Capsule())
-                .clickable(
-                    enabled = enabled,
-                    interactionSource = null,
-                    indication = null,
-                    role = Role.Tab,
-                    onClick = { onSelected(item.key) },
-                )
-                .graphicsLayer {
-                    this.alpha = if (selected && hideSelectedItem) 0f else alpha()
-                    val contentScale = scale()
-                    scaleX = contentScale
-                    scaleY = contentScale
-                },
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            NavigationTabContent(
-                item = item,
-                selected = selected,
-                selectedColorFilter = selectedColorFilter,
+    Layout(
+        modifier = Modifier.fillMaxSize(),
+        content = {
+            items.values.forEachIndexed { index, item ->
+                val selected = item.key == selectedKey
+                Layout(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .clickable(
+                            enabled = enabled,
+                            interactionSource = null,
+                            indication = null,
+                            role = Role.Tab,
+                            onClick = { onSelected(item.key) },
+                        ),
+                    content = {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .clip(Capsule())
+                                .graphicsLayer {
+                                    this.alpha = if (selected && hideSelectedItem) 0f else alpha()
+                                    val contentScale = scale()
+                                    scaleX = contentScale
+                                    scaleY = contentScale
+                                },
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                        ) {
+                            NavigationTabContent(
+                                item = item,
+                                selected = selected,
+                                selectedColorFilter = selectedColorFilter,
+                            )
+                        }
+                    },
+                ) { measurables, constraints ->
+                    val visualWidth = lerp(expandedTabWidthPx, compactTabWidthPx, compactProgress.value)
+                        .roundToInt().coerceAtLeast(1)
+                    val placeable = measurables.single().measure(
+                        androidx.compose.ui.unit.Constraints.fixed(visualWidth, constraints.maxHeight),
+                    )
+                    layout(constraints.maxWidth, constraints.maxHeight) {
+                        val offset = when (index) {
+                            0 -> 0
+                            items.values.lastIndex -> constraints.maxWidth - visualWidth
+                            else -> (constraints.maxWidth - visualWidth) / 2
+                        }
+                        placeable.placeRelative(offset, 0)
+                    }
+                }
+            }
+        },
+    ) { measurables, constraints ->
+        val itemWidth = lerp(expandedTabWidthPx, compactTabWidthPx, compactProgress.value)
+            .roundToInt().coerceIn(1, constraints.maxWidth.coerceAtLeast(1))
+        val step = if (measurables.size > 1) {
+            (constraints.maxWidth - itemWidth).toFloat() / (measurables.size - 1)
+        } else 0f
+        // Keep targets inside both the visual item and the neighboring center midpoints.
+        val starts = IntArray(measurables.size)
+        val placeables = measurables.mapIndexed { index, measurable ->
+            val visualStart = (index * step).roundToInt()
+            val slotStart = if (index == 0) 0 else {
+                (itemWidth / 2f + (index - 0.5f) * step).roundToInt()
+            }
+            val slotEnd = if (index == measurables.lastIndex) constraints.maxWidth else {
+                (itemWidth / 2f + (index + 0.5f) * step).roundToInt()
+            }
+            val hitStart = maxOf(slotStart, visualStart)
+            val hitEnd = minOf(slotEnd, visualStart + itemWidth)
+            starts[index] = hitStart
+            measurable.measure(
+                androidx.compose.ui.unit.Constraints.fixed(
+                    (hitEnd - hitStart).coerceAtLeast(0), constraints.maxHeight,
+                ),
             )
+        }
+        layout(constraints.maxWidth, constraints.maxHeight) {
+            placeables.forEachIndexed { index, placeable ->
+                placeable.placeRelative(starts[index], 0)
+            }
         }
     }
 }
@@ -875,13 +1006,22 @@ internal fun <T> BoxScope.MorphingSelectedNavigationItem(
 ) {
     val sharedTabScale = LocalLiquidTabScale.current
     val density = LocalDensity.current
-    val currentContentWidthPx = morphSurfaceWidthPx(
-        fullWidthPx,
-        compactWidthPx,
-        compactProgress.value.coerceIn(0f, 1f),
-    ) - 2f * horizontalInsetPx
+    val expandedTabs = remember(fullWidthPx, horizontalInsetPx, density, itemCount) {
+        navigationTabGeometry(
+            contentWidthPx = fullWidthPx - 2f * horizontalInsetPx,
+            itemCount = itemCount,
+            minimumWidthPx = with(density) { ExpandedNavigationItemMinWidth.toPx() },
+            protectedIconRadiusPx = with(density) {
+                ExpandedNavigationIconSize.toPx() / 2f + NavigationItemIconClearance.toPx()
+            },
+        )
+    }
     val selectedTabWidth = with(density) {
-        (currentContentWidthPx / itemCount)
+        lerp(
+            expandedTabs.widthPx,
+            (compactWidthPx - 2f * horizontalInsetPx) / itemCount,
+            compactProgress.value.coerceIn(0f, 1f),
+        )
             .coerceAtLeast(ExpandedNavigationIconSize.toPx())
             .toDp()
     }
@@ -899,11 +1039,11 @@ internal fun <T> BoxScope.MorphingSelectedNavigationItem(
                     progress,
                 )
                 val currentContentWidth = currentSurfaceWidth - 2f * horizontalInsetPx
-                val expandedTabWidth = (expandedContentWidth / itemCount).coerceAtLeast(1f)
+                val expandedTabCenter = expandedTabs.center(selectedIndex.toFloat())
                 val expandedCenter = if (isLtr) {
-                    (selectedIndex + 0.5f) * expandedTabWidth
+                    expandedTabCenter
                 } else {
-                    expandedContentWidth - (selectedIndex + 0.5f) * expandedTabWidth
+                    expandedContentWidth - expandedTabCenter
                 }
                 val compactCenter = compactContentWidth / 2f
                 val targetCenter = lerp(expandedCenter, compactCenter, progress)
