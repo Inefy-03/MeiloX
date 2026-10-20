@@ -550,6 +550,9 @@
     <string name="account_user_id">使用者 ID %1$d</string>
     <string name="account_follows">關注</string>
     <string name="account_followers">粉絲</string>
+    <string name="account_no_follows">暫無關注</string>
+    <string name="account_no_followers">暫無粉絲</string>
+    <string name="account_load_more">載入更多</string>
     <string name="account_playlist_metric">歌單</string>
     <string name="account_listening_rank">我的聽歌排行</string>
     <string name="account_week">最近一週</string>

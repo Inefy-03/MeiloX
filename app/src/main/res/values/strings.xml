@@ -551,6 +551,9 @@
     <string name="account_user_id">User ID %1$d</string>
     <string name="account_follows">Following</string>
     <string name="account_followers">Followers</string>
+    <string name="account_no_follows">Not following anyone yet</string>
+    <string name="account_no_followers">No followers yet</string>
+    <string name="account_load_more">Load More</string>
     <string name="account_playlist_metric">Playlists</string>
     <string name="account_listening_rank">Listening Rankings</string>
     <string name="account_week">Last Week</string>
