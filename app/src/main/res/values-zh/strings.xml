@@ -209,6 +209,9 @@
     <string name="appearance_theme">主题</string>
     <string name="appearance_letter_spacing">界面字间距</string>
     <string name="appearance_letter_spacing_value">%1$.1f sp</string>
+    <string name="appearance_bottom_floating_extra_spacing">底部悬浮内容额外抬高</string>
+    <string name="appearance_bottom_floating_extra_spacing_value">%1$d dp</string>
+    <string name="appearance_bottom_floating_extra_spacing_description">将底部导航、搜索栏和迷你播放器向上移动。</string>
     <string name="appearance_dynamic_theme">歌曲动态主题</string>
     <string name="appearance_dynamic_theme_description">根据当前歌曲封面为界面着色。</string>
     <string name="appearance_accent_color">强调色</string>

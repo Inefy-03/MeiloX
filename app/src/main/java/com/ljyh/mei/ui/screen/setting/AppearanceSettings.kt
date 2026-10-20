@@ -51,6 +51,9 @@ import com.ljyh.mei.constants.LibraryStyle
 import com.ljyh.mei.constants.LibraryStyleKey
 import com.ljyh.mei.constants.LibraryDefaultPageKey
 import com.ljyh.mei.constants.KeepBottomBarExpandedKey
+import com.ljyh.mei.constants.BottomFloatingContentExtraSpacingKey
+import com.ljyh.mei.constants.DefaultBottomFloatingContentExtraSpacing
+import com.ljyh.mei.constants.MaxBottomFloatingContentExtraSpacing
 import com.ljyh.mei.constants.LiquidGlassEnabledKey
 import com.ljyh.mei.constants.ReduceTransparencyKey
 import com.ljyh.mei.constants.PodcastsEnabledKey
@@ -101,6 +104,8 @@ fun AppearanceSettings(
     val (libraryStyle, setLibraryStyle) = rememberEnumPreference(LibraryStyleKey, LibraryStyle.Default)
     val (libraryDefaultPage, setLibraryDefaultPage) = rememberPreference(LibraryDefaultPageKey, "")
     val (keepBottomBarExpanded, setKeepBottomBarExpanded) = rememberPreference(KeepBottomBarExpandedKey, false)
+    val (bottomFloatingExtraSpacing, setBottomFloatingExtraSpacing) =
+        rememberPreference(BottomFloatingContentExtraSpacingKey, DefaultBottomFloatingContentExtraSpacing)
     val (liquidGlassEnabled, setLiquidGlassEnabled) = rememberPreference(LiquidGlassEnabledKey, true)
     val (reduceTransparency, setReduceTransparency) = rememberPreference(ReduceTransparencyKey, false)
     val podcastsEnabled by rememberPreference(PodcastsEnabledKey, true)
@@ -176,6 +181,7 @@ fun AppearanceSettings(
                     keepBottomBarExpanded,
                     setKeepBottomBarExpanded,
                 )
+                AppearanceBottomFloatingSpacing(bottomFloatingExtraSpacing, setBottomFloatingExtraSpacing)
                 AppearanceToggle(
                     R.string.appearance_liquid_glass,
                     R.string.appearance_liquid_glass_description,
@@ -328,6 +334,41 @@ private fun AppearanceLetterSpacing(savedSpacing: Float, setSpacing: (Float) -> 
                     contentDescription = title
                     stateDescription = valueLabel
                 },
+            )
+        }
+    }
+}
+
+@Composable
+private fun AppearanceBottomFloatingSpacing(savedSpacing: Int, setSpacing: (Int) -> Unit) {
+    val spacing = savedSpacing.coerceIn(0, MaxBottomFloatingContentExtraSpacing)
+    // Keep the latest local edit visible while consecutive preference writes settle.
+    var draftSpacing by remember { mutableStateOf<Int?>(null) }
+    val displayedSpacing = draftSpacing ?: spacing
+    val title = stringResource(R.string.appearance_bottom_floating_extra_spacing)
+    val valueLabel = stringResource(R.string.appearance_bottom_floating_extra_spacing_value, displayedSpacing)
+
+    GlassCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.fillMaxWidth().padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SfIcon("arrow.up", null)
+                Text(title, Modifier.weight(1f).padding(horizontal = 13.dp))
+                Text(valueLabel, style = IosTypography.subheadline, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            GlassSlider(
+                value = displayedSpacing.toFloat(),
+                onValueChange = { draftSpacing = it.roundToInt().coerceIn(0, MaxBottomFloatingContentExtraSpacing) },
+                onValueChangeFinished = { setSpacing(draftSpacing ?: spacing) },
+                valueRange = 0f..MaxBottomFloatingContentExtraSpacing.toFloat(),
+                modifier = Modifier.padding(horizontal = 10.dp).semantics {
+                    contentDescription = title
+                    stateDescription = valueLabel
+                },
+            )
+            Text(
+                stringResource(R.string.appearance_bottom_floating_extra_spacing_description),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }

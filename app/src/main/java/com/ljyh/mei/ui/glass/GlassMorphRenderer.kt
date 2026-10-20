@@ -361,12 +361,21 @@ internal fun rememberMorphingNavigationGlass(
                 val initialTop = origin.y - verticalTravel.toPx() * morphProgress().coerceIn(0f, 1f)
                 val captureRight = if (captureWidth != null) origin.x + size.width + 16.dp.toPx()
                     else view.width.toFloat().coerceAtLeast(size.width)
-                val viewport = recording.viewport ?: Rect(
-                    left = if (captureWidth != null) captureRight - captureWidth.toPx() - 32.dp.toPx() else 0f,
-                    top = initialTop - 16.dp.toPx(),
-                    right = captureRight,
-                    bottom = initialTop + maxOf(size.height, 64.dp.toPx()) + verticalTravel.toPx() + 16.dp.toPx(),
-                ).also { recording.viewport = it }
+                val capturePadding = 16.dp.toPx()
+                val cachedViewport = recording.viewport
+                // IME movement can carry a control beyond its normal morph path.
+                // Keep reusing the capture until that extra travel leaves its band.
+                val viewport = if (cachedViewport == null ||
+                    origin.y < cachedViewport.top ||
+                    origin.y + size.height > cachedViewport.bottom
+                ) {
+                    Rect(
+                        left = if (captureWidth != null) captureRight - captureWidth.toPx() - 32.dp.toPx() else 0f,
+                        top = initialTop - capturePadding,
+                        right = captureRight,
+                        bottom = initialTop + maxOf(size.height, 64.dp.toPx()) + verticalTravel.toPx() + capturePadding,
+                    ).also { recording.viewport = it }
+                } else cachedViewport
                 val visualEnd = coordinates.localToRoot(Offset(size.width, size.height))
                 val sampleScale = Offset(
                     ((visualEnd.x - origin.x) / size.width.coerceAtLeast(1f)).coerceAtLeast(0.001f),
