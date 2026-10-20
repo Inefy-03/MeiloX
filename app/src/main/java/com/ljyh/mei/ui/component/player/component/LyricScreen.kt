@@ -110,6 +110,15 @@ fun LyricScreen(
     sourceBadgeEndOffset: Dp = 0.dp,
     sourceBadgeAnchor: Offset? = null,
     sourceBadgeAnchorProgress: () -> Float = { 1f },
+    sourceBadgeHorizontalAnchorX: Float? = null,
+    topFadeHeight: Dp = 20.dp,
+    bottomFadeHeight: Dp = 100.dp,
+    synchronizeEntryWithParent: Boolean = false,
+    lyricContentModifier: Modifier = Modifier,
+    rendererVerticalPadding: Dp = 8.dp,
+    sourceBadgeBottomInset: () -> Dp = { 0.dp },
+    controlsFadeRange: (Float) -> ClosedFloatingPointRange<Float>? = { null },
+    showSourceBadge: Boolean = true,
 ) {
     val context = LocalContext.current
     val layoutDirection = LocalLayoutDirection.current
@@ -178,7 +187,7 @@ fun LyricScreen(
                 .fillMaxWidth()
                 .weight(1f)
                 .onGloballyPositioned { badgeHostCoordinates = it }
-                .pointerInput(controlsVisible, onToggleControls) {
+                .pointerInput(controlsVisible, onToggleControls, showSourceBadge) {
                     val badgeSlop = 12.dp.toPx()
                     awaitEachGesture {
                         val down = awaitFirstDown(
@@ -186,7 +195,7 @@ fun LyricScreen(
                             pass = PointerEventPass.Initial,
                         )
                         val lowerHalf = down.position.y >= size.height / 2f
-                        val inBadge = badgeBounds?.inflate(badgeSlop)?.contains(down.position) == true
+                        val inBadge = showSourceBadge && badgeBounds?.inflate(badgeSlop)?.contains(down.position) == true
                         var moved = false
                         var released = false
                         var pressed = true
@@ -248,7 +257,7 @@ fun LyricScreen(
                             }
                         }
                     }
-                    LifecycleStartedEffect(player, keepAliveZonePx, lyricOffsetPx, manualScroll, contentVisible, active) {
+                    LifecycleStartedEffect(player, keepAliveZonePx, lyricOffsetPx, manualScroll, contentVisible, active, synchronizeEntryWithParent) {
                         if (!contentVisible || !active) return@LifecycleStartedEffect
                         try {
                             // A retained host must position before its old frame becomes visible.
@@ -287,7 +296,7 @@ fun LyricScreen(
                                     val positioned = runInterruptibleLyricJump(
                                         restoreVisibility = { lyricAlpha.snapTo(1f) },
                                     ) {
-                                        if (snap && lyricAlpha.value > 0f) {
+                                        if (snap && lyricAlpha.value > 0f && !(initialPositionPending && synchronizeEntryWithParent)) {
                                             lyricAlpha.animateTo(0f, tween(120))
                                         }
                                         // Seeking may continue while the old lyrics fade out.
@@ -326,11 +335,13 @@ fun LyricScreen(
                                 }
                                 animatedPosition = position
                                 if (initialPositionPending || jumped) {
+                                    val parentOwnsEntry = initialPositionPending && synchronizeEntryWithParent
                                     initialPositionPending = false
                                     // Keep the positioning frame hidden, then fade in while time
                                     // updates continue so karaoke highlighting stays responsive.
                                     withFrameNanos { }
-                                    launch { lyricAlpha.animateTo(1f, tween(180)) }
+                                    if (parentOwnsEntry) lyricAlpha.snapTo(1f)
+                                    else launch { lyricAlpha.animateTo(1f, tween(180)) }
                                 }
                                 delay(50)
                             }
@@ -376,7 +387,7 @@ fun LyricScreen(
                                 }
                             },
                             modifier = Modifier
-                                .padding(vertical = 8.dp)
+                                .padding(vertical = rendererVerticalPadding)
                                 .graphicsLayer {
                                     alpha = lyricAlpha.value
                                     blendMode = BlendMode.Plus
@@ -400,32 +411,40 @@ fun LyricScreen(
                             offset = 48.dp,
                             keepAliveZone = keepAliveZone,
                             placementGeneration = placementGeneration,
+                            topFadeHeight = topFadeHeight,
+                            bottomFadeHeight = bottomFadeHeight,
+                            contentModifier = lyricContentModifier,
+                            controlsFadeRange = controlsFadeRange,
                         )
                     }
                 }
 
-                LyricSourceBadge(
+                if (showSourceBadge) LyricSourceBadge(
                     source = lyricData.source,
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(bottom = 8.dp)
                         .offset {
                             val defaultX = sourceBadgeEndOffset.roundToPx()
+                            val defaultY = -sourceBadgeBottomInset().roundToPx()
                             val host = badgeHostCoordinates
                             val anchor = sourceBadgeAnchor
-                            if (host == null || !host.isAttached || anchor == null) {
-                                IntOffset(defaultX, 0)
+                            if (host == null || !host.isAttached) {
+                                IntOffset(defaultX, defaultY)
                             } else {
                                 val badgeSize = 34.dp.roundToPx()
                                 val isLtr = layoutDirection == LayoutDirection.Ltr
                                 val left = if (isLtr) host.size.width - badgeSize else 0
                                 val top = host.size.height - 8.dp.roundToPx() - badgeSize
-                                val delta = anchor - host.positionInRoot() - Offset(left.toFloat(), top.toFloat())
-                                val targetX = if (isLtr) delta.x else -delta.x
-                                val progress = sourceBadgeAnchorProgress().coerceIn(0f, 1f)
-                                IntOffset(
-                                    (defaultX + (targetX - defaultX) * progress).roundToInt(),
-                                    (delta.y * progress).roundToInt(),
+                                val hostOrigin = host.positionInRoot()
+                                lyricSourceBadgeOffset(
+                                    defaultX = defaultX,
+                                    badgeOrigin = Offset(left.toFloat(), top.toFloat()),
+                                    anchor = anchor?.minus(hostOrigin),
+                                    progress = sourceBadgeAnchorProgress(),
+                                    isLtr = isLtr,
+                                    horizontalAnchorX = sourceBadgeHorizontalAnchorX?.minus(hostOrigin.x),
+                                    defaultY = defaultY,
                                 )
                             }
                         }
@@ -436,6 +455,30 @@ fun LyricScreen(
             }
         }
     }
+}
+
+/** Coordinates are local to the badge host; horizontal alignment survives footer motion. */
+internal fun lyricSourceBadgeOffset(
+    defaultX: Int,
+    badgeOrigin: Offset,
+    anchor: Offset?,
+    progress: Float,
+    isLtr: Boolean,
+    horizontalAnchorX: Float? = null,
+    defaultY: Int = 0,
+): IntOffset {
+    val direction = if (isLtr) 1f else -1f
+    val fraction = progress.coerceIn(0f, 1f)
+    val targetX = ((horizontalAnchorX ?: anchor?.x) ?: badgeOrigin.x) - badgeOrigin.x
+    val x = if (horizontalAnchorX != null) {
+        targetX * direction
+    } else if (anchor != null) {
+        defaultX + (targetX * direction - defaultX) * fraction
+    } else defaultX.toFloat()
+    val y = if (anchor != null) {
+        defaultY + (anchor.y - badgeOrigin.y - defaultY) * fraction
+    } else defaultY.toFloat()
+    return IntOffset(x.roundToInt(), y.roundToInt())
 }
 
 internal suspend fun runInterruptibleLyricJump(

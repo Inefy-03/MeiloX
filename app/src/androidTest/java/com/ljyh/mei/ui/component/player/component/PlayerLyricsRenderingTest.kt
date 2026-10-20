@@ -28,6 +28,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
@@ -359,5 +360,129 @@ class PlayerLyricsRenderingTest {
         assertEquals(1, results.size)
         assertEquals(sizeSp.sp, results.single().layoutInput.style.fontSize)
         assertEquals(weight, results.single().layoutInput.style.fontWeight)
+    }
+
+    @Test
+    fun zeroEdgeFadesRemoveTheMaskFromTheFirstVisibleLine() {
+        val fade = mutableStateOf(70.dp)
+        compose.setContent {
+            MaterialTheme {
+                Box(Modifier.width(260.dp).height(240.dp).background(Color.Black).testTag("edge-fade")) {
+                    PlayerLyricsView(
+                        listState = rememberLazyListState(),
+                        lyrics = SyncedLyrics(lines = listOf(SyncedLine("MMMM", null, 1_000, 5_000))),
+                        currentPosition = { 3_500 },
+                        onLineClicked = {}, onLinePressed = {}, isManualScrolling = false,
+                        normalLineTextStyle = TextStyle(fontSize = 28.sp, fontWeight = FontWeight.Bold),
+                        useBlurEffect = false, showPhonetic = false,
+                        offset = 0.dp, keepAliveZone = 0.dp,
+                        topFadeHeight = fade.value, bottomFadeHeight = fade.value,
+                    )
+                }
+            }
+        }
+        fun brightestPixel(): Float {
+            val pixels = compose.onNodeWithTag("edge-fade").captureToImage().toPixelMap()
+            var result = 0f
+            for (y in 0 until pixels.height) for (x in 0 until pixels.width) {
+                result = maxOf(result, pixels[x, y].luminance())
+            }
+            return result
+        }
+        val masked = brightestPixel()
+        compose.runOnIdle { fade.value = 0.dp }
+        val unmasked = brightestPixel()
+        assertTrue("Zero fades must bypass the edge mask", unmasked > masked + 0.15f)
+        assertTrue("Unmasked focused text must retain its full brightness", unmasked > 0.95f)
+    }
+
+    @Test
+    fun lyricEntryTranslationIsAppliedOnceToTheContent() {
+        val offset = mutableStateOf(0.dp)
+        compose.setContent {
+            MaterialTheme {
+                Box(Modifier.width(260.dp).height(300.dp)) {
+                    PlayerLyricsView(
+                        listState = rememberLazyListState(),
+                        lyrics = SyncedLyrics(lines = listOf(SyncedLine("Entry lyric", null, 1_000, 5_000))),
+                        currentPosition = { 3_500 },
+                        onLineClicked = {}, onLinePressed = {}, isManualScrolling = false,
+                        useBlurEffect = false, showPhonetic = false,
+                        offset = 0.dp, keepAliveZone = 0.dp,
+                        topFadeHeight = 0.dp, bottomFadeHeight = 0.dp,
+                        contentModifier = Modifier.graphicsLayer { translationY = offset.value.toPx() },
+                    )
+                }
+            }
+        }
+        val initial = compose.onNodeWithText("Entry lyric", useUnmergedTree = true).getUnclippedBoundsInRoot().top
+        compose.runOnIdle { offset.value = 24.dp }
+        val translated = compose.onNodeWithText("Entry lyric", useUnmergedTree = true).getUnclippedBoundsInRoot().top
+        assertEquals(24f, (translated - initial).value, 0.5f)
+    }
+
+    @Test
+    fun aTopOnlyFadeKeepsLyricsNearTheBottomFullyVisible() {
+        compose.setContent {
+            MaterialTheme {
+                Box(Modifier.width(260.dp).height(240.dp).background(Color.Black).testTag("top-only-fade")) {
+                    PlayerLyricsView(
+                        listState = rememberLazyListState(),
+                        lyrics = SyncedLyrics(lines = listOf(SyncedLine("MMMM", null, 1_000, 5_000))),
+                        currentPosition = { 3_500 },
+                        onLineClicked = {}, onLinePressed = {}, isManualScrolling = false,
+                        normalLineTextStyle = TextStyle(fontSize = 28.sp, fontWeight = FontWeight.Bold),
+                        useBlurEffect = false, showPhonetic = false,
+                        offset = 180.dp, keepAliveZone = 0.dp,
+                        topFadeHeight = 100.dp, bottomFadeHeight = 0.dp,
+                    )
+                }
+            }
+        }
+        compose.onNodeWithText("MMMM", useUnmergedTree = true).assertIsDisplayed()
+        val pixels = compose.onNodeWithTag("top-only-fade").captureToImage().toPixelMap()
+        var brightest = 0f
+        for (y in pixels.height / 2 until pixels.height) for (x in 0 until pixels.width) {
+            brightest = maxOf(brightest, pixels[x, y].luminance())
+        }
+        assertTrue("A zero bottom fade must not dim the lower lyric line", brightest > 0.95f)
+    }
+
+    @Test
+    fun controlsGradientExposesTheBackgroundAndRestoresLyricsAfterDismissal() {
+        val controlsVisible = mutableStateOf(true)
+        val background = Color(0.10f, 0.25f, 0.40f)
+        compose.setContent {
+            MaterialTheme {
+                Box(Modifier.width(260.dp).height(260.dp).background(background).testTag("controls-background")) {
+                    PlayerLyricsView(
+                        listState = rememberLazyListState(),
+                        lyrics = SyncedLyrics(lines = listOf(SyncedLine("MMMM", null, 1_000, 5_000))),
+                        currentPosition = { 3_500 },
+                        onLineClicked = {}, onLinePressed = {}, isManualScrolling = false,
+                        normalLineTextStyle = TextStyle(fontSize = 28.sp, fontWeight = FontWeight.Bold),
+                        useBlurEffect = false, showPhonetic = false,
+                        offset = 180.dp, keepAliveZone = 0.dp,
+                        topFadeHeight = 0.dp, bottomFadeHeight = 0.dp,
+                        controlsFadeRange = { height ->
+                            val shift = if (controlsVisible.value) 0f else 0.6f
+                            ((0.4f + shift) * height)..((0.55f + shift) * height)
+                        },
+                    )
+                }
+            }
+        }
+        fun brightestRed(): Float {
+            val pixels = compose.onNodeWithTag("controls-background").captureToImage().toPixelMap()
+            var result = 0f
+            for (y in 0 until pixels.height) for (x in 0 until pixels.width) {
+                result = maxOf(result, pixels[x, y].red)
+                assertTrue("The mask must not clear the player's background", pixels[x, y].blue >= background.blue - 0.02f)
+            }
+            return result
+        }
+        assertEquals(background.red, brightestRed(), 0.02f)
+        compose.runOnIdle { controlsVisible.value = false }
+        assertTrue("Lyrics must reappear when controls leave", brightestRed() > background.red + 0.6f)
     }
 }

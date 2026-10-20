@@ -128,6 +128,10 @@ internal fun PlayerLyricsView(
     showDebugRectangles: Boolean = false,
     placementGeneration: Int = 0,
     translationLineTextStyle: TextStyle = LocalTextStyle.current,
+    topFadeHeight: Dp = 20.dp,
+    bottomFadeHeight: Dp = 100.dp,
+    contentModifier: Modifier = Modifier,
+    controlsFadeRange: (Float) -> ClosedFloatingPointRange<Float>? = { null },
 ) {
     val stableNormalTextStyle = remember(normalLineTextStyle) { normalLineTextStyle }
     val stableAccompanimentTextStyle =
@@ -236,23 +240,39 @@ internal fun PlayerLyricsView(
                     state = listState,
                     modifier = modifier
                         .fillMaxSize()
+                        .then(contentModifier)
                         .graphicsLayer {
                             compositingStrategy = CompositingStrategy.Offscreen
                         }
                         .drawWithCache {
                             onDrawWithContent {
                                 drawContent()
-                                val topFade = 20.dp.toPx() / size.height
-                                val bottomFade = 100.dp.toPx() / size.height
-                                drawRect(
-                                    brush = Brush.verticalGradient(
-                                        0f to Color.Transparent,
-                                        topFade to Color.Black,
-                                        1f - bottomFade to Color.Black,
-                                        1f to Color.Transparent
-                                    ),
-                                    blendMode = BlendMode.DstIn
-                                )
+                                if (topFadeHeight > 0.dp || bottomFadeHeight > 0.dp) {
+                                    val topFade = topFadeHeight.toPx() / size.height
+                                    val bottomFade = bottomFadeHeight.toPx() / size.height
+                                    drawRect(
+                                        brush = Brush.verticalGradient(
+                                            0f to if (topFade > 0f) Color.Transparent else Color.Black,
+                                            topFade to Color.Black,
+                                            1f - bottomFade to Color.Black,
+                                            1f to if (bottomFade > 0f) Color.Transparent else Color.Black,
+                                        ),
+                                        blendMode = BlendMode.DstIn
+                                    )
+                                }
+                                controlsFadeRange(size.height)?.let { range ->
+                                    if (range.start < size.height && range.endInclusive > range.start) {
+                                        // Fade lyric pixels while preserving the live player background.
+                                        drawRect(
+                                            brush = Brush.verticalGradient(
+                                                colors = listOf(Color.Black, Color.Transparent),
+                                                startY = range.start,
+                                                endY = range.endInclusive,
+                                            ),
+                                            blendMode = BlendMode.DstIn,
+                                        )
+                                    }
+                                }
                             }
                         }
                         .layout { measurable, constraints ->

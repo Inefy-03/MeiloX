@@ -351,11 +351,13 @@ fun IosTopToolbar(
 fun IosSheetTopToolbar(
     title: String,
     modifier: Modifier = Modifier,
+    navigation: (@Composable () -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     IosTopToolbar(
         title = title,
         modifier = modifier.offset(y = (-5).dp),
+        navigation = navigation,
         actions = actions,
     )
 }
@@ -365,6 +367,7 @@ fun IosSheetTopToolbarButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    onLongClick: (() -> Unit)? = null,
     content: @Composable BoxScope.() -> Unit,
 ) {
     val colors = LocalGlassColors.current
@@ -378,6 +381,7 @@ fun IosSheetTopToolbarButton(
         navigationSurfaceColor = groupedListBackground,
         navigationSurfaceAlphaMultiplier = 1f,
         sampleBackdrop = false,
+        onLongClick = onLongClick,
         content = content,
     )
 }

@@ -1,6 +1,7 @@
 package com.ljyh.mei.ui.glass
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Row
@@ -458,6 +459,7 @@ fun GlassSurface(
     morphCaptureWidth: Dp? = null,
     morphVerticalTravel: Dp = 0.dp,
     onClick: (() -> Unit)? = null,
+    onLongClick: (() -> Unit)? = null,
     contentAlignment: Alignment = Alignment.Center,
     content: @Composable BoxScope.() -> Unit,
 ) {
@@ -651,13 +653,21 @@ fun GlassSurface(
             )
             .then(
                 if (onClick != null) {
-                    Modifier.clickable(
+                    val click = if (onLongClick != null) Modifier.combinedClickable(
                         enabled = enabled,
                         interactionSource = null,
                         indication = null,
                         role = Role.Button,
                         onClick = onClick,
-                    ).then(if (enabled) interactiveHighlight.gestureModifier else Modifier)
+                        onLongClick = onLongClick,
+                    ) else Modifier.clickable(
+                        enabled = enabled,
+                        interactionSource = null,
+                        indication = null,
+                        role = Role.Button,
+                        onClick = onClick,
+                    )
+                    click.then(if (enabled) interactiveHighlight.gestureModifier else Modifier)
                 } else {
                     Modifier
                 },
@@ -717,6 +727,7 @@ fun GlassIconButton(
     sampleBackdrop: Boolean = true,
     morphProgress: androidx.compose.runtime.State<Float>? = null,
     morphCaptureWidth: Dp? = null,
+    onLongClick: (() -> Unit)? = null,
     content: @Composable BoxScope.() -> Unit,
 ) {
     GlassSurface(
@@ -732,6 +743,7 @@ fun GlassIconButton(
         morphProgress = morphProgress,
         morphCaptureWidth = morphCaptureWidth,
         onClick = onClick,
+        onLongClick = onLongClick,
         content = content,
     )
 }

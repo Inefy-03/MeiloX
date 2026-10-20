@@ -58,6 +58,7 @@ import com.ljyh.mei.constants.OriginalCoverKey
 import com.ljyh.mei.constants.PlayerStyle
 import com.ljyh.mei.constants.PlayerStyleKey
 import com.ljyh.mei.data.model.MediaMetadata
+import com.ljyh.mei.ui.component.player.component.applemusic.rememberAppleMusicPlaybackScale
 import com.ljyh.mei.playback.PlayerConnection
 import com.ljyh.mei.utils.image.saveImageToGallery
 import com.ljyh.mei.utils.rememberEnumPreference
@@ -97,7 +98,9 @@ fun Cover(
         ContinuousRoundedRectangle(12.dp)
     }
 
-    val animatedCoverScale by animateFloatAsState(
+    val animatedCoverScale by if (playerStyle == PlayerStyle.AppleMusic) {
+        rememberAppleMusicPlaybackScale(isPlaying, sheetExpanded)
+    } else animateFloatAsState(
         targetValue = if (isPlaying) 1f else 0.9f,
         animationSpec = if (sheetExpanded) spring(
             dampingRatio = Spring.DampingRatioMediumBouncy,
